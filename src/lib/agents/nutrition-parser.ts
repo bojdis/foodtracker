@@ -11,7 +11,7 @@ import {
   type TimeSlot,
 } from "@/lib/types";
 
-const PARSER_MODEL = "gemini-3.8-flash";
+const PARSER_MODEL = "gemini-3.5-flash-lite";
 const GEMINI_TIMEOUT_MS = 35_000;
 
 export const FALLBACK_AI_NOTE =
@@ -430,7 +430,7 @@ export async function parseEntryWithAgent(params: {
         ),
         input: params.rawText.trim(),
         generation_config: {
-          thinking_level: "low",
+          thinking_level: "minimal",
         },
         response_format: {
           type: "text",
@@ -688,7 +688,7 @@ const CZECH_FOOD_DICTIONARY: FoodDictEntry[] = [
   },
   {
     patterns: [
-      /\b(?:vajecn\w*\s+)?omelet\w*(?!\s+ze?\s+\d+\s*(?:vaj|vej))\b/g,
+      /\b(?:vajecn\w*\s+)?omelet\w*(?:\s+ze?\s+\d+\s*(?:vajec|vajick\w*|vejc\w*))?\b/g,
     ],
     canonicalName: "Vaječná omeleta",
     defaultPortionGrams: 170,
@@ -701,7 +701,7 @@ const CZECH_FOOD_DICTIONARY: FoodDictEntry[] = [
   },
   {
     patterns: [
-      /\b(?:michan\w*\s+|varen\w*\s+|sazen\w*\s+)?(?:vajick\w*|vejc\w*)\b|\bvolsk\w*\s+ok\w*\b/g,
+      /\b(?:michan\w*\s+|varen\w*\s+|sazen\w*\s+)?(?:vajick\w*|vejc\w*|vajec|vejce)\b|\bvolsk\w*\s+ok\w*\b/g,
     ],
     canonicalName: "Vejce",
     defaultPortionGrams: 55,
@@ -1031,6 +1031,24 @@ function extractFoodAmount(
   windowAscii: string,
   defaultPortionGrams: number
 ): { portionGrams: number; multiplier: number; displayPrefix: string | null } {
+  const omeletEggMatch = windowAscii.match(
+    /\bze?\s+(\d+|jedn\w*|dv\w*|tri|ctyr\w*|pet)\s*(?:vajec|vajick\w*|vejc\w*)\b/
+  );
+  if (omeletEggMatch) {
+    const rawCount = omeletEggMatch[1];
+    const eggCount =
+      WORD_QUANTITIES[rawCount] ?? (Number.isFinite(Number(rawCount)) ? Number(rawCount) : 0);
+    if (eggCount > 0 && eggCount <= 12) {
+      const portionGrams = Math.round(eggCount * 55 + 10);
+      const multiplier = (eggCount * 82 + 25) / 270;
+      return {
+        portionGrams,
+        multiplier,
+        displayPrefix: null,
+      };
+    }
+  }
+
   const cleaned = windowAscii.replace(/\bse?\s+sesti\b/g, " ");
 
   const gramsMatch = cleaned.match(/(\d+(?:\.\d+)?)\s*(?:gram\w*|gr\b|g\b|ml\b)/);

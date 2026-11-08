@@ -95,6 +95,29 @@ describe("nutrition-parser fallback & MET calculations", () => {
     expect(svickova.items[0].portion_grams).toBe(450);
     expect(svickova.items[0].kcal).toBe(780);
     expect(svickova.items[1].canonical_name).toContain("Pivo");
+
+    const omeleta3 = parseEntryFallback({
+      rawText: "omeleta ze 3 vajec",
+      userWeightKg: 85,
+      fallbackTimeSlot: "morning",
+    });
+    expect(omeleta3.items).toHaveLength(1);
+    expect(omeleta3.items[0].canonical_name).toBe("Vaječná omeleta");
+    expect(omeleta3.items[0].portion_grams).toBe(175);
+    expect(omeleta3.items[0].kcal).toBe(271);
+    expect(omeleta3.items[0].protein_g).toBeGreaterThan(19);
+    expect(omeleta3.items[0].carbs_g).toBeLessThan(3);
+    expect(omeleta3.items[0].fat_g).toBeGreaterThan(18);
+
+    const omeleta2 = parseEntryFallback({
+      rawText: "vaječná omeleta ze 2 vajec",
+      userWeightKg: 85,
+      fallbackTimeSlot: "morning",
+    });
+    expect(omeleta2.items).toHaveLength(1);
+    expect(omeleta2.items[0].canonical_name).toBe("Vaječná omeleta");
+    expect(omeleta2.items[0].portion_grams).toBe(120);
+    expect(omeleta2.items[0].kcal).toBe(189);
   });
 
   it("scales burned_kcal deterministically with userWeightKg, duration, and realistic MTB MET", () => {
