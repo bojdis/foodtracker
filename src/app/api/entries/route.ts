@@ -4,11 +4,15 @@ import {
   CreateEntryInputSchema,
   type BodyMeasurementRow,
   type DailySummaryRow,
+  type EntryType,
   type LogEntryWithItems,
   type UserProfileRow,
 } from "@/lib/types";
 import { detectTimeSlotForDate, getTodayDateString } from "@/lib/calculations";
-import { getGeminiKeyStatus } from "@/lib/agents/nutrition-parser";
+import {
+  getGeminiKeyStatus,
+  parseEntryWithAgent,
+} from "@/lib/agents/nutrition-parser";
 import { processLogEntryInBackground } from "@/lib/agents/orchestrator";
 import { extractBodyMeasurementFromText } from "@/lib/body-parser";
 import { upsertBodyMeasurementAndSyncProfile } from "@/lib/measurements-service";
@@ -259,6 +263,134 @@ export async function POST(request: Request) {
     ? extractedMeasurement.remainingText
     : input.raw_text;
   const timeSlot = input.time_slot ?? detectTimeSlotForDate();
+
+  if (input.image_base64) {
+    const { data: profile } = await supabase
+      .from("user_profiles")
+      .select("weight_kg, bmr_kcal")
+      .eq("user_id", userId)
+      .maybeSingle();
+
+    const rawWeight = Number(profile?.weight_kg);
+    const userWeightKg =
+      Number.isFinite(rawWeight) && rawWeight > 0 ? rawWeight : 80;
+    const rawBmr = Number(profile?.bmr_kcal);
+    const userBmrKcal =
+      Number.isFinite(rawBmr) && rawBmr > 0 ? rawBmr : undefined;
+
+    let parsedResult;
+    try {
+      parsedResult = await parseEntryWithAgent({
+        rawText: textForLog || "Výživový štítek z fotky",
+        imageBase64: input.image_base64,
+        imageMimeType: input.image_mime_type,
+        userWeightKg,
+        userBmrKcal,
+        fallbackTimeSlot: timeSlot,
+      });
+    } catch (parseErr) {
+      const msg =
+        parseErr instanceof Error
+          ? parseErr.message
+          : "Nepodařilo se analyzovat fotku štítku.";
+      return NextResponse.json({ error: msg }, { status: 422 });
+    }
+
+    const foodItems = parsedResult.items.filter((i) => i.item_kind === "food");
+    const activityItems = parsedResult.items.filter((i) => i.item_kind === "activity");
+    const entryType: EntryType = activityItems.length > 0 && foodItems.length === 0 ? "activity" : "food";
+
+    const totalIntakeKcal = Math.max(
+      0,
+      Math.round(foodItems.reduce((sum, i) => sum + i.kcal, 0))
+    );
+    const totalBurnedKcal = Math.max(
+      0,
+      Math.round(activityItems.reduce((sum, i) => sum + i.burned_kcal, 0))
+    );
+    const totalProteinG = Math.round(foodItems.reduce((sum, i) => sum + i.protein_g, 0) * 10) / 10;
+    const totalCarbsG = Math.round(foodItems.reduce((sum, i) => sum + i.carbs_g, 0) * 10) / 10;
+    const totalFatG = Math.round(foodItems.reduce((sum, i) => sum + i.fat_g, 0) * 10) / 10;
+    const totalFiberG = Math.round(foodItems.reduce((sum, i) => sum + i.fiber_g, 0) * 10) / 10;
+
+    const summaryTitle = parsedResult.summary_title || "Záznam z fotky";
+    const rawTextToSave = textForLog && textForLog.length > 0
+      ? textForLog
+      : summaryTitle;
+
+    const { data: inserted, error: insertError } = await supabase
+      .from("log_entries")
+      .insert({
+        user_id: userId,
+        log_date: input.log_date,
+        time_slot: timeSlot,
+        raw_text: rawTextToSave,
+        summary_title: summaryTitle,
+        ai_notes: parsedResult.ai_notes ?? "Hodnoty vyčteny z fotky výživového štítku",
+        entry_type: entryType,
+        status: "done",
+        processed_at: new Date().toISOString(),
+        total_intake_kcal: totalIntakeKcal,
+        total_burned_kcal: totalBurnedKcal,
+        total_protein_g: totalProteinG,
+        total_carbs_g: totalCarbsG,
+        total_fat_g: totalFatG,
+        total_fiber_g: totalFiberG,
+      })
+      .select("*")
+      .single();
+
+    if (insertError) {
+      return NextResponse.json(
+        { error: insertError.message },
+        { status: 500 }
+      );
+    }
+
+    const itemsPayload = parsedResult.items.map((item) => ({
+      user_id: userId,
+      log_entry_id: inserted.id,
+      item_kind: item.item_kind,
+      item_name: item.item_name,
+      canonical_name: item.canonical_name,
+      portion_grams: item.portion_grams != null ? Math.round(item.portion_grams) : null,
+      duration_minutes: item.duration_minutes != null ? Math.round(item.duration_minutes) : null,
+      met_value: item.met_value != null ? Math.round(item.met_value * 10) / 10 : null,
+      kcal: Math.max(0, Math.round(item.kcal)),
+      burned_kcal: Math.max(0, Math.round(item.burned_kcal)),
+      protein_g: Math.round(item.protein_g * 10) / 10,
+      carbs_g: Math.round(item.carbs_g * 10) / 10,
+      fat_g: Math.round(item.fat_g * 10) / 10,
+      fiber_g: Math.round(item.fiber_g * 10) / 10,
+      confidence: item.confidence,
+    }));
+
+    if (itemsPayload.length > 0) {
+      await supabase.from("entry_items").insert(itemsPayload);
+    }
+
+    await supabase.rpc("recalculate_daily_summary", {
+      p_log_date: input.log_date,
+    });
+
+    const entryWithItems: LogEntryWithItems = {
+      ...inserted,
+      entry_items: itemsPayload.map((item, idx) => ({
+        ...item,
+        id: idx + 1,
+        created_at: new Date().toISOString(),
+      })),
+    };
+
+    return NextResponse.json(
+      {
+        entry: entryWithItems,
+        measurementSaved,
+        updatedProfile,
+      },
+      { status: 201 }
+    );
+  }
 
   const { data: inserted, error: insertError } = await supabase
     .from("log_entries")

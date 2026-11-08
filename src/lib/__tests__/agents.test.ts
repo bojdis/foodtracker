@@ -16,7 +16,11 @@ import {
 import { processLogEntryInBackground } from "@/lib/agents/orchestrator";
 import * as backgroundModule from "@/lib/supabase/background";
 import type { createBackgroundClient } from "@/lib/supabase/background";
-import type { ActivityTemplateRow, MealTemplateRow } from "@/lib/types";
+import {
+  CreateEntryInputSchema,
+  type ActivityTemplateRow,
+  type MealTemplateRow,
+} from "@/lib/types";
 
 describe("nutrition-parser fallback & MET calculations", () => {
   const originalApiKey = process.env.GEMINI_API_KEY;
@@ -212,6 +216,35 @@ describe("nutrition-parser fallback & MET calculations", () => {
     expect(res.items[0].kcal).toBe(210);
     expect(res.items[0].protein_g).toBe(0);
     expect(res.items[0].carbs_g).toBe(0);
+  });
+
+  it("throws clear error when image is supplied but GEMINI_API_KEY is missing", async () => {
+    delete process.env.GEMINI_API_KEY;
+    await expect(
+      parseEntryWithAgent({
+        rawText: "",
+        imageBase64: "dGVzdC1pbWFnZQ==",
+        imageMimeType: "image/jpeg",
+        userWeightKg: 80,
+        fallbackTimeSlot: "lunch",
+      })
+    ).rejects.toThrowError(/Pro analýzu fotek výživových štítků je vyžadován platný GEMINI_API_KEY/);
+  });
+
+  it("validates CreateEntryInputSchema with image and empty raw_text", () => {
+    const validWithImage = CreateEntryInputSchema.safeParse({
+      raw_text: "",
+      image_base64: "data:image/jpeg;base64,123456789012345678901234567890123456789012345678901234567890",
+      image_mime_type: "image/jpeg",
+      log_date: "2026-11-08",
+    });
+    expect(validWithImage.success).toBe(true);
+
+    const invalidEmpty = CreateEntryInputSchema.safeParse({
+      raw_text: "",
+      log_date: "2026-11-08",
+    });
+    expect(invalidEmpty.success).toBe(false);
   });
 });
 

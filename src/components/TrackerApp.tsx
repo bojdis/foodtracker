@@ -446,13 +446,17 @@ export function TrackerApp({
     );
   }
 
-  async function handleCreateEntry(rawText: string): Promise<boolean> {
+  async function handleCreateEntry(
+    rawText: string,
+    imagePayload?: { base64: string; mimeType: string }
+  ): Promise<boolean> {
     setActionError(null);
     setSubmitting(true);
 
     try {
       const res = await safeFetchJson<{
         entry?: LogEntryWithItems | null;
+        summary?: DailySummaryRow | null;
         measurementSaved?: BodyMeasurementRow | null;
         updatedProfile?: UserProfileRow | null;
         error?: string;
@@ -461,6 +465,8 @@ export function TrackerApp({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           raw_text: rawText,
+          image_base64: imagePayload?.base64,
+          image_mime_type: imagePayload?.mimeType,
           log_date: selectedDate,
         }),
       });
@@ -502,10 +508,24 @@ export function TrackerApp({
           created,
           ...prev.filter((item) => item.id !== created.id),
         ]);
-        setSummary((prev) => ({
-          ...prev,
-          pending_count: prev.pending_count + 1,
-        }));
+
+        if (created.status === "done") {
+          if (res.data.summary) {
+            setSummary(res.data.summary);
+          } else {
+            void fetchDayData(selectedDate, { silent: true });
+          }
+          showTemporaryFeedback(
+            imagePayload
+              ? "Štítek byl úspěšně analyzován a zapsán!"
+              : "Záznam byl zapsán!"
+          );
+        } else {
+          setSummary((prev) => ({
+            ...prev,
+            pending_count: prev.pending_count + 1,
+          }));
+        }
       }
 
       return true;

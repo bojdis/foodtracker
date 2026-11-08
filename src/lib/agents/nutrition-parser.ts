@@ -261,6 +261,12 @@ function buildSystemInstruction(
     "- U aktivity nastav kcal=0, protein_g=0, carbs_g=0, fat_g=0, fiber_g=0.",
     "- U jídla nastav burned_kcal=0.",
     "- Pole canonical_meal_name vyplň pouze názvem samotného jídla (bez sportu a bez gramů), např. 'Míchaná vejce s chlebem' nebo 'Ovesná kaše s banánem'.",
+    "",
+    "PRAVIDLA PRO FOTKY ŠTÍTKŮ A OBALŮ POTRAVIN:",
+    "- Pokud je přiložena fotka výživového štítku nebo obalu potraviny, vyčti z ní přesné nutriční hodnoty (energie v kJ/kcal, bílkoviny, sacharidy, tuky, vláknina).",
+    "- POZOR NA 100 G vs. CELÁ PORCE/BALENÍ: Výrobci často uvádí hodnoty na 100 g i na celou porci/balení (např. 1 láhev = 330 ml / 400 kcal, sendvič = 185 g). Pokud uživatel v doplňujícím textu neuvede jinak (např. 'vypil jsem jen půlku'), VŽDY propočítej a ulož hodnoty pro CELÉ spotřebované balení/porci!",
+    "- V canonical_name a item_name uveď přesný český název výrobku (např. 'Mana Drink', 'Krůtí sendvič').",
+    "- V ai_notes stručně uveď, že hodnoty byly vyčteny z etikety výrobku.",
   ].join("\n");
 }
 
@@ -382,25 +388,37 @@ function normalizeAgentResult(
 
 export async function parseEntryWithAgent(params: {
   rawText: string;
+  imageBase64?: string;
+  imageMimeType?: string;
   userWeightKg: number;
   userBmrKcal?: number;
   fallbackTimeSlot: TimeSlot;
 }): Promise<ParsedEntryResult> {
   // 1. Exact deterministic match for Radek's personal meal shortcuts (0 latency, 100% label accuracy, 0 API tokens)
-  const presetMatch = tryResolvePersonalPresetEntry(
-    params.rawText,
-    params.fallbackTimeSlot
-  );
-  if (presetMatch) {
-    return presetMatch;
+  if (!params.imageBase64) {
+    const presetMatch = tryResolvePersonalPresetEntry(
+      params.rawText,
+      params.fallbackTimeSlot
+    );
+    if (presetMatch) {
+      return presetMatch;
+    }
   }
 
   const apiKey = process.env.GEMINI_API_KEY?.trim();
   const keyStatus = getGeminiKeyStatus(apiKey);
   if (keyStatus === "missing" || !apiKey) {
+    if (params.imageBase64) {
+      throw new Error(
+        "Pro analýzu fotek výživových štítků je vyžadován platný GEMINI_API_KEY a připojení k internetu."
+      );
+    }
     return parseEntryFallback(params);
   }
   if (keyStatus === "invalid_format") {
+    if (params.imageBase64) {
+      throw new Error(INVALID_GEMINI_KEY_NOTE);
+    }
     return parseEntryFallback(params, INVALID_GEMINI_KEY_NOTE);
   }
 
@@ -420,6 +438,29 @@ export async function parseEntryWithAgent(params: {
       }, GEMINI_TIMEOUT_MS);
     });
 
+    const cleanBase64 = params.imageBase64
+      ? params.imageBase64.replace(
+          /^data:image\/[a-zA-Z0-9+.-]+;base64,/,
+          ""
+        )
+      : undefined;
+
+    const inputPayload = cleanBase64
+      ? [
+          {
+            type: "text" as const,
+            text:
+              params.rawText.trim() ||
+              "Analyzuj tento výživový štítek nebo obal potraviny na fotce a rozpadni ho na položky, gramáže a makroživiny.",
+          },
+          {
+            type: "image" as const,
+            data: cleanBase64,
+            mime_type: (params.imageMimeType || "image/jpeg") as "image/jpeg",
+          },
+        ]
+      : params.rawText.trim();
+
     const interaction = await Promise.race([
       client.interactions.create({
         model: PARSER_MODEL,
@@ -428,7 +469,7 @@ export async function parseEntryWithAgent(params: {
           params.fallbackTimeSlot,
           params.userBmrKcal
         ),
-        input: params.rawText.trim(),
+        input: inputPayload,
         generation_config: {
           thinking_level: "minimal",
         },
@@ -441,7 +482,8 @@ export async function parseEntryWithAgent(params: {
       timeoutPromise,
     ]);
 
-    const rawJson = interaction.output_text?.trim();
+    const interactionObj = interaction as { output_text?: string };
+    const rawJson = interactionObj.output_text?.trim();
     if (!rawJson) {
       throw new Error("Gemini nevrátil žádný strukturovaný JSON výstup.");
     }

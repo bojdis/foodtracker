@@ -8,6 +8,7 @@ import {
   type KeyboardEvent,
 } from "react";
 import {
+  Camera,
   Check,
   ChevronDown,
   ChevronUp,
@@ -16,9 +17,11 @@ import {
   Ruler,
   Scale,
   Sparkles,
+  X,
 } from "lucide-react";
 import type { BodyMeasurementRow } from "@/lib/types";
 import { WaistMeasurementGuide } from "./WaistMeasurementGuide";
+import { compressImageFile, type CompressedImageResult } from "@/lib/image-utils";
 
 interface HeroCaptureCardProps {
   selectedDateLabel: string;
@@ -31,7 +34,10 @@ interface HeroCaptureCardProps {
   feedbackBanner: string | null;
   onDismissFeedback: () => void;
   onInputFocus?: () => void;
-  onSubmitEntry: (rawText: string) => Promise<boolean>;
+  onSubmitEntry: (
+    rawText: string,
+    imagePayload?: { base64: string; mimeType: string }
+  ) => Promise<boolean>;
   onSaveMeasurement: (payload: {
     weight_kg: number | null;
     waist_cm: number | null;
@@ -62,6 +68,11 @@ export function HeroCaptureCard({
 }: HeroCaptureCardProps) {
   const [text, setText] = useState("");
   const [bodyDrawerOpen, setBodyDrawerOpen] = useState(false);
+  const [selectedImage, setSelectedImage] =
+    useState<CompressedImageResult | null>(null);
+  const [imageCompressing, setImageCompressing] = useState(false);
+  const [imageError, setImageError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const defaultWeightStr =
     dayMeasurement?.weight_kg != null
@@ -107,15 +118,57 @@ export function HeroCaptureCard({
     }
   }, []);
 
+  async function handleFileSelect(
+    event: React.ChangeEvent<HTMLInputElement>
+  ) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    setImageCompressing(true);
+    setImageError(null);
+    try {
+      const result = await compressImageFile(file);
+      setSelectedImage(result);
+    } catch (err) {
+      setImageError(
+        err instanceof Error ? err.message : "Nepodařilo se zpracovat fotku."
+      );
+    } finally {
+      setImageCompressing(false);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
+    }
+  }
+
+  function clearSelectedImage() {
+    setSelectedImage(null);
+    setImageError(null);
+  }
+
   async function submitCurrentText() {
     const trimmed = text.trim();
-    if (trimmed.length < 2 || submitting) {
+    if (
+      (trimmed.length < 2 && !selectedImage) ||
+      submitting ||
+      imageCompressing
+    ) {
       return;
     }
 
-    const ok = await onSubmitEntry(trimmed);
+    const ok = await onSubmitEntry(
+      trimmed,
+      selectedImage
+        ? {
+            base64: selectedImage.base64,
+            mimeType: selectedImage.mimeType,
+          }
+        : undefined
+    );
     if (ok) {
       setText("");
+      setSelectedImage(null);
+      setImageError(null);
     }
   }
 
@@ -203,6 +256,49 @@ export function HeroCaptureCard({
 
       {/* Main Capture Form */}
       <form onSubmit={handleFormSubmit}>
+        {/* Hidden File / Camera Input */}
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          onChange={handleFileSelect}
+        />
+
+        {/* Selected Image Thumbnail Preview Card */}
+        {selectedImage && (
+          <div className="mb-2.5 flex items-center gap-3 rounded-2xl border border-emerald-500/30 bg-emerald-50/80 p-2.5 dark:border-emerald-500/25 dark:bg-emerald-950/30">
+            <img
+              src={selectedImage.dataUrl}
+              alt="Náhled štítku"
+              className="h-14 w-14 rounded-xl border border-emerald-500/40 object-cover shadow-sm"
+            />
+            <div className="min-w-0 flex-1 text-xs">
+              <p className="flex items-center gap-1.5 font-bold text-emerald-800 dark:text-emerald-200">
+                <Camera className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
+                <span>Fotka štítku / jídla připojena</span>
+              </p>
+              <p className="mt-0.5 text-slate-500 dark:text-slate-400">
+                Model vyčte přesné nutriční hodnoty přímo z etikety
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={clearSelectedImage}
+              aria-label="Odebrat fotku"
+              className="rounded-xl p-1.5 text-slate-400 transition hover:bg-rose-500/10 hover:text-rose-500 dark:hover:bg-rose-500/20"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        )}
+
+        {imageError && (
+          <div className="mb-2.5 rounded-2xl border border-rose-500/30 bg-rose-500/10 p-2.5 text-xs font-semibold text-rose-700 dark:text-rose-300">
+            {imageError}
+          </div>
+        )}
+
         <div className="relative">
           <textarea
             ref={textareaRef}
@@ -218,14 +314,38 @@ export function HeroCaptureCard({
             onKeyDown={handleKeyDown}
             maxLength={600}
             aria-label="Zápis jídla, pohybu nebo váhy"
-            placeholder="Napiš co jsi snědl nebo dělal — např. „2 vejce, chléb se šunkou“, „kuřecí s rýží“, „45 min běžky“ nebo „váha 99,2 kg“…"
+            placeholder={
+              selectedImage
+                ? "Volitelně doplň poznámku (např. „vypil jsem jen půlku“ nebo nech prázdné)…"
+                : "Napiš co jsi snědl nebo dělal — např. „2 vejce, chléb se šunkou“, nebo vyfoť štítek 📷…"
+            }
             className="w-full resize-none rounded-2xl border-2 border-slate-200/90 bg-slate-50/90 px-3.5 py-2.5 text-base font-medium leading-snug text-slate-900 placeholder:font-normal placeholder:text-slate-400 outline-none transition focus:border-emerald-500 focus:bg-white focus:ring-4 focus:ring-emerald-500/15 dark:border-slate-700/90 dark:bg-slate-950/80 dark:text-white dark:placeholder:text-slate-500 dark:focus:border-emerald-400 dark:focus:bg-slate-950"
           />
         </div>
 
-        {/* Bottom Bar inside Hero Card: Weight/Waist Toggle on Left + Primary Submit CTA on Right */}
+        {/* Bottom Bar inside Hero Card: Weight/Waist Toggle + Camera Button + Submit CTA */}
         <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              disabled={submitting || imageCompressing}
+              onClick={() => fileInputRef.current?.click()}
+              title="Vyfotit výživový štítek nebo jídlo"
+              aria-label="Vyfotit výživový štítek nebo jídlo"
+              className={`inline-flex items-center gap-1.5 rounded-2xl border px-3 py-2 text-xs font-semibold transition active:scale-95 ${
+                selectedImage
+                  ? "border-emerald-500 bg-emerald-500/15 text-emerald-800 dark:border-emerald-400 dark:text-emerald-200"
+                  : "border-slate-200 bg-slate-50 text-slate-700 hover:border-emerald-500/40 hover:bg-emerald-500/5 dark:border-slate-700 dark:bg-slate-800/90 dark:text-slate-200"
+              }`}
+            >
+              {imageCompressing ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin text-emerald-500" />
+              ) : (
+                <Camera className="h-3.5 w-3.5 text-emerald-500" />
+              )}
+              <span>{selectedImage ? "Štítek vyfocen" : "Vyfotit štítek"}</span>
+            </button>
+
             <button
               type="button"
               onClick={() => setBodyDrawerOpen((prev) => !prev)}
@@ -268,13 +388,17 @@ export function HeroCaptureCard({
 
           <button
             type="submit"
-            disabled={submitting || text.trim().length < 2}
+            disabled={
+              submitting ||
+              imageCompressing ||
+              (!selectedImage && text.trim().length < 2)
+            }
             className="inline-flex min-h-10 shrink-0 items-center justify-center gap-1.5 rounded-2xl bg-gradient-to-r from-emerald-500 to-teal-600 px-4 py-2 text-sm font-bold text-white shadow-md shadow-emerald-500/25 transition hover:from-emerald-600 hover:to-teal-700 active:scale-95 disabled:cursor-not-allowed disabled:opacity-45"
           >
             {submitting ? (
               <>
                 <Loader2 className="h-4 w-4 animate-spin" />
-                <span>Ukládám…</span>
+                <span>{selectedImage ? "Analyzuji štítek…" : "Ukládám…"}</span>
               </>
             ) : (
               <>

@@ -47,11 +47,22 @@ export const ProfileInputSchema = z.object({
 
 export type ProfileInput = z.infer<typeof ProfileInputSchema>;
 
-export const CreateEntryInputSchema = z.object({
-  raw_text: z.string().trim().min(2, "Zadej prosím alespoň 2 znaky").max(600),
-  log_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  time_slot: z.enum(["morning", "lunch", "snack", "evening", "anytime"]).optional(),
-});
+export const CreateEntryInputSchema = z
+  .object({
+    raw_text: z.string().trim().max(600).default(""),
+    image_base64: z.string().optional(),
+    image_mime_type: z.string().optional(),
+    log_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    time_slot: z.enum(["morning", "lunch", "snack", "evening", "anytime"]).optional(),
+  })
+  .refine(
+    (data) =>
+      data.raw_text.length >= 2 ||
+      (typeof data.image_base64 === "string" && data.image_base64.length > 50),
+    {
+      message: "Zadej prosím text jídla nebo vyfoť štítek.",
+    }
+  );
 
 export const QuickCheckToggleSchema = z.object({
   template_id: z.number().int().positive(),
