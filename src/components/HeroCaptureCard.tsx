@@ -1,0 +1,439 @@
+"use client";
+
+import {
+  useEffect,
+  useRef,
+  useState,
+  type FormEvent,
+  type KeyboardEvent,
+} from "react";
+import {
+  Check,
+  ChevronDown,
+  ChevronUp,
+  Loader2,
+  Plus,
+  Ruler,
+  Scale,
+  Sparkles,
+} from "lucide-react";
+import type { BodyMeasurementRow } from "@/lib/types";
+import { WaistMeasurementGuide } from "./WaistMeasurementGuide";
+
+interface HeroCaptureCardProps {
+  selectedDateLabel: string;
+  isToday: boolean;
+  submitting: boolean;
+  savingMeasurement: boolean;
+  dayMeasurement: BodyMeasurementRow | null;
+  lastKnownWeightKg: number | null;
+  lastKnownWaistCm: number | null;
+  feedbackBanner: string | null;
+  onDismissFeedback: () => void;
+  onInputFocus?: () => void;
+  onSubmitEntry: (rawText: string) => Promise<boolean>;
+  onSaveMeasurement: (payload: {
+    weight_kg: number | null;
+    waist_cm: number | null;
+  }) => Promise<boolean>;
+}
+
+function round1(val: number): number {
+  return Math.round(val * 10) / 10;
+}
+
+function formatNumCs(val: number): string {
+  return val.toFixed(1).replace(".", ",").replace(/,0$/, "");
+}
+
+export function HeroCaptureCard({
+  selectedDateLabel,
+  isToday,
+  submitting,
+  savingMeasurement,
+  dayMeasurement,
+  lastKnownWeightKg,
+  lastKnownWaistCm,
+  feedbackBanner,
+  onDismissFeedback,
+  onInputFocus,
+  onSubmitEntry,
+  onSaveMeasurement,
+}: HeroCaptureCardProps) {
+  const [text, setText] = useState("");
+  const [bodyDrawerOpen, setBodyDrawerOpen] = useState(false);
+
+  const defaultWeightStr =
+    dayMeasurement?.weight_kg != null
+      ? String(dayMeasurement.weight_kg)
+      : lastKnownWeightKg != null
+        ? String(lastKnownWeightKg)
+        : "";
+
+  const defaultWaistStr =
+    dayMeasurement?.waist_cm != null ? String(dayMeasurement.waist_cm) : "";
+
+  const [weightInput, setWeightInput] = useState<string>(defaultWeightStr);
+  const [waistInput, setWaistInput] = useState<string>(defaultWaistStr);
+
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+
+  // Sync drawer inputs when selected day or recorded measurement changes
+  useEffect(() => {
+    setWeightInput(
+      dayMeasurement?.weight_kg != null
+        ? String(dayMeasurement.weight_kg)
+        : lastKnownWeightKg != null
+          ? String(lastKnownWeightKg)
+          : ""
+    );
+    setWaistInput(
+      dayMeasurement?.waist_cm != null ? String(dayMeasurement.waist_cm) : ""
+    );
+  }, [
+    dayMeasurement?.id,
+    dayMeasurement?.weight_kg,
+    dayMeasurement?.waist_cm,
+    lastKnownWeightKg,
+  ]);
+
+  // Auto-focus on desktop / fine-pointer devices so user can type immediately upon opening
+  useEffect(() => {
+    if (
+      typeof window !== "undefined" &&
+      window.matchMedia("(pointer: fine)").matches
+    ) {
+      textareaRef.current?.focus();
+    }
+  }, []);
+
+  async function submitCurrentText() {
+    const trimmed = text.trim();
+    if (trimmed.length < 2 || submitting) {
+      return;
+    }
+
+    const ok = await onSubmitEntry(trimmed);
+    if (ok) {
+      setText("");
+    }
+  }
+
+  async function handleFormSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    await submitCurrentText();
+  }
+
+  function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      void submitCurrentText();
+    }
+  }
+
+  function stepWeight(delta: number) {
+    const current = Number.parseFloat(weightInput.replace(",", "."));
+    const base =
+      Number.isFinite(current) && current >= 30
+        ? current
+        : (lastKnownWeightKg ?? 90);
+    const next = Math.min(260, Math.max(35, round1(base + delta)));
+    setWeightInput(String(next));
+  }
+
+  function stepWaist(delta: number) {
+    const current = Number.parseFloat(waistInput.replace(",", "."));
+    const base =
+      Number.isFinite(current) && current >= 40
+        ? current
+        : (lastKnownWaistCm ?? 95);
+    const next = Math.min(190, Math.max(45, round1(base + delta)));
+    setWaistInput(String(next));
+  }
+
+  async function handleMeasurementSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const parsedWeight = weightInput.trim()
+      ? Number.parseFloat(weightInput.replace(",", "."))
+      : null;
+    const parsedWaist = waistInput.trim()
+      ? Number.parseFloat(waistInput.replace(",", "."))
+      : null;
+
+    const validWeight =
+      parsedWeight !== null &&
+      Number.isFinite(parsedWeight) &&
+      parsedWeight >= 35 &&
+      parsedWeight <= 260
+        ? round1(parsedWeight)
+        : null;
+
+    const validWaist =
+      parsedWaist !== null &&
+      Number.isFinite(parsedWaist) &&
+      parsedWaist >= 45 &&
+      parsedWaist <= 190
+        ? round1(parsedWaist)
+        : null;
+
+    if (validWeight === null && validWaist === null) {
+      return;
+    }
+
+    const ok = await onSaveMeasurement({
+      weight_kg: validWeight,
+      waist_cm: validWaist,
+    });
+    if (ok) {
+      setBodyDrawerOpen(false);
+    }
+  }
+
+  const hasTodayMeasurement =
+    dayMeasurement !== null &&
+    (dayMeasurement.weight_kg !== null || dayMeasurement.waist_cm !== null);
+
+  return (
+    <section className="relative rounded-3xl border border-slate-200/90 bg-white/95 p-3.5 shadow-md shadow-slate-900/5 backdrop-blur-xl sm:p-4 dark:border-slate-800/90 dark:bg-slate-900/90">
+      {!isToday && (
+        <div className="mb-2 inline-flex items-center gap-1.5 rounded-full bg-amber-500/15 px-2.5 py-0.5 text-[11px] font-bold text-amber-700 dark:text-amber-300">
+          <span>Zapisuješ do dne: {selectedDateLabel}</span>
+        </div>
+      )}
+
+      {/* Main Capture Form */}
+      <form onSubmit={handleFormSubmit}>
+        <div className="relative">
+          <textarea
+            ref={textareaRef}
+            rows={2}
+            value={text}
+            onFocus={onInputFocus}
+            onChange={(e) => {
+              setText(e.target.value);
+              if (feedbackBanner) {
+                onDismissFeedback();
+              }
+            }}
+            onKeyDown={handleKeyDown}
+            maxLength={600}
+            aria-label="Zápis jídla, pohybu nebo váhy"
+            placeholder="Napiš co jsi snědl nebo dělal — např. „2 vejce, chléb se šunkou“, „kuřecí s rýží“, „45 min běžky“ nebo „váha 99,2 kg“…"
+            className="w-full resize-none rounded-2xl border-2 border-slate-200/90 bg-slate-50/90 px-3.5 py-2.5 text-base font-medium leading-snug text-slate-900 placeholder:font-normal placeholder:text-slate-400 outline-none transition focus:border-emerald-500 focus:bg-white focus:ring-4 focus:ring-emerald-500/15 dark:border-slate-700/90 dark:bg-slate-950/80 dark:text-white dark:placeholder:text-slate-500 dark:focus:border-emerald-400 dark:focus:bg-slate-950"
+          />
+        </div>
+
+        {/* Bottom Bar inside Hero Card: Weight/Waist Toggle on Left + Primary Submit CTA on Right */}
+        <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setBodyDrawerOpen((prev) => !prev)}
+              className={`inline-flex items-center gap-1.5 rounded-2xl border px-3 py-2 text-xs font-semibold transition active:scale-95 ${
+                bodyDrawerOpen
+                  ? "border-emerald-500 bg-emerald-500/15 text-emerald-800 dark:border-emerald-400 dark:text-emerald-200"
+                  : hasTodayMeasurement
+                    ? "border-emerald-500/35 bg-emerald-500/10 text-emerald-700 hover:bg-emerald-500/15 dark:text-emerald-300"
+                    : "border-slate-200 bg-slate-50 text-slate-700 hover:border-emerald-500/40 hover:bg-emerald-500/5 dark:border-slate-700 dark:bg-slate-800/90 dark:text-slate-200"
+              }`}
+            >
+              <Scale className="h-3.5 w-3.5 text-emerald-500" />
+              {hasTodayMeasurement ? (
+                <span>
+                  {dayMeasurement?.weight_kg != null
+                    ? `${formatNumCs(dayMeasurement.weight_kg)} kg`
+                    : ""}
+                  {dayMeasurement?.weight_kg != null &&
+                  dayMeasurement?.waist_cm != null
+                    ? " · "
+                    : ""}
+                  {dayMeasurement?.waist_cm != null
+                    ? `${formatNumCs(dayMeasurement.waist_cm)} cm`
+                    : ""}
+                </span>
+              ) : (
+                <span>Váha / pas</span>
+              )}
+              {bodyDrawerOpen ? (
+                <ChevronUp className="h-3.5 w-3.5 opacity-70" />
+              ) : (
+                <ChevronDown className="h-3.5 w-3.5 opacity-70" />
+              )}
+            </button>
+
+            <span className="hidden text-[11px] text-slate-400 sm:inline dark:text-slate-500">
+              Enter = odeslat
+            </span>
+          </div>
+
+          <button
+            type="submit"
+            disabled={submitting || text.trim().length < 2}
+            className="inline-flex min-h-10 shrink-0 items-center justify-center gap-1.5 rounded-2xl bg-gradient-to-r from-emerald-500 to-teal-600 px-4 py-2 text-sm font-bold text-white shadow-md shadow-emerald-500/25 transition hover:from-emerald-600 hover:to-teal-700 active:scale-95 disabled:cursor-not-allowed disabled:opacity-45"
+          >
+            {submitting ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" />
+                <span>Ukládám…</span>
+              </>
+            ) : (
+              <>
+                <Plus className="h-4 w-4 stroke-[2.75]" />
+                <span>Zapsat</span>
+              </>
+            )}
+          </button>
+        </div>
+      </form>
+
+      {/* Instant Confirmation Toast (e.g. after saving weight/waist) */}
+      {feedbackBanner && (
+        <div className="mt-3 flex items-center justify-between gap-2 rounded-2xl border border-emerald-500/30 bg-emerald-500/12 px-3.5 py-2 text-xs font-semibold text-emerald-800 dark:text-emerald-200">
+          <span className="inline-flex items-center gap-1.5">
+            <Check className="h-4 w-4 shrink-0 text-emerald-500 stroke-[2.5]" />
+            {feedbackBanner}
+          </span>
+          <button
+            type="button"
+            onClick={onDismissFeedback}
+            className="text-[11px] font-bold opacity-75 hover:opacity-100"
+          >
+            OK
+          </button>
+        </div>
+      )}
+
+      {/* Expandable Inline Weight & Waist Quick-Stepper Drawer */}
+      {bodyDrawerOpen && (
+        <form
+          onSubmit={handleMeasurementSubmit}
+          className="mt-3.5 space-y-3 rounded-2xl border border-slate-200/90 bg-slate-50/90 p-3.5 dark:border-slate-800 dark:bg-slate-950/70"
+        >
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            {/* Weight Stepper */}
+            <div className="rounded-2xl border border-slate-200/80 bg-white p-3 dark:border-slate-800 dark:bg-slate-900">
+              <div className="flex items-center justify-between">
+                <label
+                  htmlFor="hero-weight-input"
+                  className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-700 dark:text-slate-200"
+                >
+                  <Scale className="h-3.5 w-3.5 text-emerald-500" />
+                  Váha (kg)
+                </label>
+                {lastKnownWeightKg !== null && (
+                  <span className="text-[11px] text-slate-400">
+                    minule {formatNumCs(lastKnownWeightKg)} kg
+                  </span>
+                )}
+              </div>
+
+              <div className="mt-2 flex items-center gap-2">
+                <input
+                  id="hero-weight-input"
+                  type="text"
+                  inputMode="decimal"
+                  placeholder={
+                    lastKnownWeightKg ? formatNumCs(lastKnownWeightKg) : "99,5"
+                  }
+                  value={weightInput}
+                  onChange={(e) => setWeightInput(e.target.value)}
+                  className="w-24 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-center text-base font-extrabold tabular-nums text-slate-900 outline-none focus:border-emerald-500 focus:bg-white dark:border-slate-700 dark:bg-slate-950 dark:text-white"
+                />
+                <div className="grid flex-1 grid-cols-4 gap-1">
+                  {[-0.5, -0.1, 0.1, 0.5].map((delta) => (
+                    <button
+                      key={delta}
+                      type="button"
+                      onClick={() => stepWeight(delta)}
+                      className="rounded-xl border border-slate-200/80 bg-slate-100/80 py-2 text-xs font-bold tabular-nums text-slate-700 transition hover:border-emerald-500/40 hover:bg-emerald-500/10 active:scale-95 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
+                    >
+                      {delta > 0
+                        ? `+${String(delta).replace(".", ",")}`
+                        : String(delta).replace(".", ",")}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* Waist Stepper (Optional so yesterday's waist isn't accidentally duplicated) */}
+            <div className="rounded-2xl border border-slate-200/80 bg-white p-3 dark:border-slate-800 dark:bg-slate-900">
+              <div className="flex items-center justify-between">
+                <label
+                  htmlFor="hero-waist-input"
+                  className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-700 dark:text-slate-200"
+                >
+                  <Ruler className="h-3.5 w-3.5 text-violet-500" />
+                  Obvod pasu (cm)
+                  <span className="font-normal text-slate-400">volitelné</span>
+                </label>
+                {lastKnownWaistCm !== null && !waistInput && (
+                  <button
+                    type="button"
+                    onClick={() => setWaistInput(String(lastKnownWaistCm))}
+                    className="text-[11px] font-semibold text-violet-600 hover:underline dark:text-violet-400"
+                  >
+                    minule {formatNumCs(lastKnownWaistCm)} cm
+                  </button>
+                )}
+              </div>
+
+              <div className="mt-2 flex items-center gap-2">
+                <input
+                  id="hero-waist-input"
+                  type="text"
+                  inputMode="decimal"
+                  placeholder={
+                    lastKnownWaistCm
+                      ? `např. ${formatNumCs(lastKnownWaistCm)}`
+                      : "např. 96"
+                  }
+                  value={waistInput}
+                  onChange={(e) => setWaistInput(e.target.value)}
+                  className="w-24 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-center text-base font-extrabold tabular-nums text-slate-900 placeholder:text-xs placeholder:font-normal outline-none focus:border-violet-500 focus:bg-white dark:border-slate-700 dark:bg-slate-950 dark:text-white"
+                />
+                <div className="grid flex-1 grid-cols-4 gap-1">
+                  {[-1, -0.5, 0.5, 1].map((delta) => (
+                    <button
+                      key={delta}
+                      type="button"
+                      onClick={() => stepWaist(delta)}
+                      className="rounded-xl border border-slate-200/80 bg-slate-100/80 py-2 text-xs font-bold tabular-nums text-slate-700 transition hover:border-violet-500/40 hover:bg-violet-500/10 active:scale-95 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
+                    >
+                      {delta > 0
+                        ? `+${String(delta).replace(".", ",")}`
+                        : String(delta).replace(".", ",")}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <WaistMeasurementGuide />
+
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-[11px] text-slate-500 dark:text-slate-400">
+              Při změně váhy se automaticky přepočítá tvé BMR i cíle maker.
+            </span>
+            <button
+              type="submit"
+              disabled={
+                savingMeasurement ||
+                (!weightInput.trim() && !waistInput.trim())
+              }
+              className="inline-flex shrink-0 items-center gap-1.5 rounded-xl bg-emerald-600 px-4 py-2 text-xs font-bold text-white shadow-sm transition hover:bg-emerald-700 active:scale-95 disabled:opacity-50"
+            >
+              {savingMeasurement ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Check className="h-3.5 w-3.5 stroke-[2.5]" />
+              )}
+              Uložit měření
+            </button>
+          </div>
+        </form>
+      )}
+    </section>
+  );
+}
