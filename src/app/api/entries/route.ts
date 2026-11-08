@@ -143,6 +143,27 @@ export async function GET(request: NextRequest) {
     .map((e) => e.id);
 
   let finalSummary = summary;
+
+  // Clean up any accidental empty 0-kcal "done" entries (e.g. from device photos before fix)
+  const emptyDoneIds = entries
+    .filter(
+      (e) =>
+        e.status === "done" &&
+        e.entry_items.length === 0 &&
+        Number(e.total_intake_kcal) === 0 &&
+        Number(e.total_burned_kcal) === 0
+    )
+    .map((e) => e.id);
+
+  if (emptyDoneIds.length > 0) {
+    await supabase
+      .from("log_entries")
+      .delete()
+      .in("id", emptyDoneIds)
+      .eq("user_id", userId);
+    entries = entries.filter((e) => !emptyDoneIds.includes(e.id));
+  }
+
   if (staleIds.length > 0) {
     const staleMsg =
       "Zpracování na pozadí vypršelo (pravděpodobně proběhl restart serveru). Klikni na Zkusit znovu.";
@@ -156,6 +177,14 @@ export async function GET(request: NextRequest) {
       .in("id", staleIds)
       .eq("user_id", userId);
 
+    entries = entries.map((e) =>
+      staleIds.includes(e.id)
+        ? { ...e, status: "error", error_message: staleMsg }
+        : e
+    );
+  }
+
+  if (staleIds.length > 0 || emptyDoneIds.length > 0) {
     const { data: recalcSummary } = await supabase.rpc(
       "recalculate_daily_summary",
       { p_log_date: date }
@@ -163,11 +192,6 @@ export async function GET(request: NextRequest) {
     if (recalcSummary) {
       finalSummary = recalcSummary;
     }
-    entries = entries.map((e) =>
-      staleIds.includes(e.id)
-        ? { ...e, status: "error", error_message: staleMsg }
-        : e
-    );
   }
 
   const geminiKeyStatus = getGeminiKeyStatus();
@@ -320,20 +344,34 @@ export async function POST(request: Request) {
           measurementSaved = syncResult.measurement;
           updatedProfile = syncResult.updatedProfile;
         } catch (err) {
-          console.warn("Chyba při automatickém uložení měření z fotky:", err);
-        }
-
-        if (parsedResult.items.length === 0) {
-          return NextResponse.json(
-            {
-              entry: null,
-              measurementSaved,
-              updatedProfile,
-            },
-            { status: 201 }
-          );
+          const msg =
+            err instanceof Error
+              ? err.message
+              : "Nepodařilo se uložit měření z fotky.";
+          return NextResponse.json({ error: msg }, { status: 500 });
         }
       }
+    }
+
+    if (parsedResult.items.length === 0) {
+      if (measurementSaved) {
+        return NextResponse.json(
+          {
+            entry: null,
+            measurementSaved,
+            updatedProfile,
+          },
+          { status: 201 }
+        );
+      }
+
+      return NextResponse.json(
+        {
+          error:
+            "Z fotky se nepodařilo přečíst konkrétní čísla tlaku/váhy ani výživové údaje. Zkus prosím vyfotit displej nebo štítek trochu blíž a ostřeji.",
+        },
+        { status: 422 }
+      );
     }
 
     const foodItems = parsedResult.items.filter((i) => i.item_kind === "food");

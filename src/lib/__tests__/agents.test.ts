@@ -228,7 +228,7 @@ describe("nutrition-parser fallback & MET calculations", () => {
         userWeightKg: 80,
         fallbackTimeSlot: "lunch",
       })
-    ).rejects.toThrowError(/Pro analýzu fotek výživových štítků je vyžadován platný GEMINI_API_KEY/);
+    ).rejects.toThrowError(/Pro analýzu fotek výživových štítků.*je vyžadován platný GEMINI_API_KEY/);
   });
 
   it("validates CreateEntryInputSchema with image and empty raw_text", () => {

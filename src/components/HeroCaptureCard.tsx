@@ -34,6 +34,9 @@ interface HeroCaptureCardProps {
   dayMeasurement: BodyMeasurementRow | null;
   lastKnownWeightKg: number | null;
   lastKnownWaistCm: number | null;
+  lastKnownBpSys: number | null;
+  lastKnownBpDia: number | null;
+  lastKnownPulseBpm: number | null;
   feedbackBanner: string | null;
   onDismissFeedback: () => void;
   onInputFocus?: () => void;
@@ -48,6 +51,41 @@ interface HeroCaptureCardProps {
     blood_pressure_dia?: number | null;
     pulse_bpm?: number | null;
   }) => Promise<boolean>;
+}
+
+const LAST_BP_STORAGE_KEY = "foodtracker_last_bp_v1";
+
+interface StoredBpValues {
+  sys: number | null;
+  dia: number | null;
+  pulse: number | null;
+}
+
+function readStoredBp(): StoredBpValues {
+  if (typeof window === "undefined") {
+    return { sys: null, dia: null, pulse: null };
+  }
+  try {
+    const raw = window.localStorage.getItem(LAST_BP_STORAGE_KEY);
+    if (!raw) return { sys: null, dia: null, pulse: null };
+    const parsed = JSON.parse(raw) as Partial<StoredBpValues>;
+    return {
+      sys: typeof parsed.sys === "number" ? parsed.sys : null,
+      dia: typeof parsed.dia === "number" ? parsed.dia : null,
+      pulse: typeof parsed.pulse === "number" ? parsed.pulse : null,
+    };
+  } catch {
+    return { sys: null, dia: null, pulse: null };
+  }
+}
+
+function writeStoredBp(values: StoredBpValues): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(LAST_BP_STORAGE_KEY, JSON.stringify(values));
+  } catch {
+    // ignore storage quota errors
+  }
 }
 
 function round1(val: number): number {
@@ -66,6 +104,9 @@ export function HeroCaptureCard({
   dayMeasurement,
   lastKnownWeightKg,
   lastKnownWaistCm,
+  lastKnownBpSys,
+  lastKnownBpDia,
+  lastKnownPulseBpm,
   feedbackBanner,
   onDismissFeedback,
   onInputFocus,
@@ -78,7 +119,20 @@ export function HeroCaptureCard({
     useState<CompressedImageResult | null>(null);
   const [imageCompressing, setImageCompressing] = useState(false);
   const [imageError, setImageError] = useState<string | null>(null);
+  const [storedBp, setStoredBp] = useState<StoredBpValues>({
+    sys: null,
+    dia: null,
+    pulse: null,
+  });
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    setStoredBp(readStoredBp());
+  }, []);
+
+  const effectiveLastBpSys = lastKnownBpSys ?? storedBp.sys;
+  const effectiveLastBpDia = lastKnownBpDia ?? storedBp.dia;
+  const effectiveLastPulseBpm = lastKnownPulseBpm ?? storedBp.pulse;
 
   const defaultWeightStr =
     dayMeasurement?.weight_kg != null
@@ -90,21 +144,32 @@ export function HeroCaptureCard({
   const defaultWaistStr =
     dayMeasurement?.waist_cm != null ? String(dayMeasurement.waist_cm) : "";
 
-  const [weightInput, setWeightInput] = useState<string>(defaultWeightStr);
-  const [waistInput, setWaistInput] = useState<string>(defaultWaistStr);
-  const [bpSysInput, setBpSysInput] = useState<string>(
+  const defaultBpSysStr =
     dayMeasurement?.blood_pressure_sys != null
       ? String(dayMeasurement.blood_pressure_sys)
-      : ""
-  );
-  const [bpDiaInput, setBpDiaInput] = useState<string>(
+      : effectiveLastBpSys != null
+        ? String(effectiveLastBpSys)
+        : "";
+
+  const defaultBpDiaStr =
     dayMeasurement?.blood_pressure_dia != null
       ? String(dayMeasurement.blood_pressure_dia)
-      : ""
-  );
-  const [pulseInput, setPulseInput] = useState<string>(
-    dayMeasurement?.pulse_bpm != null ? String(dayMeasurement.pulse_bpm) : ""
-  );
+      : effectiveLastBpDia != null
+        ? String(effectiveLastBpDia)
+        : "";
+
+  const defaultPulseStr =
+    dayMeasurement?.pulse_bpm != null
+      ? String(dayMeasurement.pulse_bpm)
+      : effectiveLastPulseBpm != null
+        ? String(effectiveLastPulseBpm)
+        : "";
+
+  const [weightInput, setWeightInput] = useState<string>(defaultWeightStr);
+  const [waistInput, setWaistInput] = useState<string>(defaultWaistStr);
+  const [bpSysInput, setBpSysInput] = useState<string>(defaultBpSysStr);
+  const [bpDiaInput, setBpDiaInput] = useState<string>(defaultBpDiaStr);
+  const [pulseInput, setPulseInput] = useState<string>(defaultPulseStr);
 
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
@@ -120,19 +185,29 @@ export function HeroCaptureCard({
     setWaistInput(
       dayMeasurement?.waist_cm != null ? String(dayMeasurement.waist_cm) : ""
     );
-    setBpSysInput(
-      dayMeasurement?.blood_pressure_sys != null
-        ? String(dayMeasurement.blood_pressure_sys)
-        : ""
-    );
-    setBpDiaInput(
+    const nextSys =
+      dayMeasurement?.blood_pressure_sys ?? effectiveLastBpSys ?? null;
+    const nextDia =
+      dayMeasurement?.blood_pressure_dia ?? effectiveLastBpDia ?? null;
+    const nextPulse =
+      dayMeasurement?.pulse_bpm ?? effectiveLastPulseBpm ?? null;
+
+    setBpSysInput(nextSys != null ? String(nextSys) : "");
+    setBpDiaInput(nextDia != null ? String(nextDia) : "");
+    setPulseInput(nextPulse != null ? String(nextPulse) : "");
+
+    if (
+      dayMeasurement?.blood_pressure_sys != null &&
       dayMeasurement?.blood_pressure_dia != null
-        ? String(dayMeasurement.blood_pressure_dia)
-        : ""
-    );
-    setPulseInput(
-      dayMeasurement?.pulse_bpm != null ? String(dayMeasurement.pulse_bpm) : ""
-    );
+    ) {
+      const nextStored: StoredBpValues = {
+        sys: dayMeasurement.blood_pressure_sys,
+        dia: dayMeasurement.blood_pressure_dia,
+        pulse: dayMeasurement.pulse_bpm ?? effectiveLastPulseBpm ?? null,
+      };
+      setStoredBp(nextStored);
+      writeStoredBp(nextStored);
+    }
   }, [
     dayMeasurement?.id,
     dayMeasurement?.weight_kg,
@@ -141,6 +216,9 @@ export function HeroCaptureCard({
     dayMeasurement?.blood_pressure_dia,
     dayMeasurement?.pulse_bpm,
     lastKnownWeightKg,
+    effectiveLastBpSys,
+    effectiveLastBpDia,
+    effectiveLastPulseBpm,
   ]);
 
   // Auto-focus on desktop / fine-pointer devices so user can type immediately upon opening
@@ -241,21 +319,24 @@ export function HeroCaptureCard({
 
   function stepSys(delta: number) {
     const cur = parseInt(bpSysInput, 10);
-    const base = Number.isFinite(cur) && cur >= 60 ? cur : 120;
+    const base =
+      Number.isFinite(cur) && cur >= 60 ? cur : (effectiveLastBpSys ?? 120);
     const next = Math.min(240, Math.max(70, base + delta));
     setBpSysInput(String(next));
   }
 
   function stepDia(delta: number) {
     const cur = parseInt(bpDiaInput, 10);
-    const base = Number.isFinite(cur) && cur >= 40 ? cur : 80;
+    const base =
+      Number.isFinite(cur) && cur >= 40 ? cur : (effectiveLastBpDia ?? 80);
     const next = Math.min(150, Math.max(45, base + delta));
     setBpDiaInput(String(next));
   }
 
   function stepPulse(delta: number) {
     const cur = parseInt(pulseInput, 10);
-    const base = Number.isFinite(cur) && cur >= 35 ? cur : 70;
+    const base =
+      Number.isFinite(cur) && cur >= 35 ? cur : (effectiveLastPulseBpm ?? 70);
     const next = Math.min(200, Math.max(40, base + delta));
     setPulseInput(String(next));
   }
@@ -347,6 +428,15 @@ export function HeroCaptureCard({
       pulse_bpm: validPulse,
     });
     if (ok) {
+      if (hasBp) {
+        const nextStored: StoredBpValues = {
+          sys: validSys,
+          dia: validDia,
+          pulse: validPulse ?? effectiveLastPulseBpm ?? null,
+        };
+        setStoredBp(nextStored);
+        writeStoredBp(nextStored);
+      }
       setBodyDrawerOpen(false);
     }
   }
@@ -500,6 +590,11 @@ export function HeroCaptureCard({
                         />
                         {dayMeasurement.blood_pressure_sys}/
                         {dayMeasurement.blood_pressure_dia}
+                        {dayMeasurement.pulse_bpm != null && (
+                          <span className="font-normal opacity-75">
+                            ({dayMeasurement.pulse_bpm} bpm)
+                          </span>
+                        )}
                       </span>
                     )}
                 </span>
@@ -673,17 +768,41 @@ export function HeroCaptureCard({
                   Krevní tlak a tep
                   <span className="font-normal text-slate-400">volitelné</span>
                 </label>
-                {liveBpCategory && (
-                  <span
-                    className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-bold ${liveBpCategory.badgeClass}`}
-                  >
+                <div className="flex flex-wrap items-center gap-2">
+                  {effectiveLastBpSys !== null &&
+                    effectiveLastBpDia !== null && (
+                      <span className="text-[11px] text-slate-400">
+                        minule {effectiveLastBpSys}/{effectiveLastBpDia} mmHg
+                        {effectiveLastPulseBpm !== null
+                          ? ` · ${effectiveLastPulseBpm} bpm`
+                          : ""}
+                      </span>
+                    )}
+                  {(bpSysInput || bpDiaInput || pulseInput) && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setBpSysInput("");
+                        setBpDiaInput("");
+                        setPulseInput("");
+                      }}
+                      className="text-[11px] font-semibold text-slate-400 hover:text-rose-500"
+                    >
+                      Vyčistit
+                    </button>
+                  )}
+                  {liveBpCategory && (
                     <span
-                      className="h-1.5 w-1.5 rounded-full"
-                      style={{ backgroundColor: liveBpCategory.dotColor }}
-                    />
-                    {liveBpCategory.label}
-                  </span>
-                )}
+                      className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-bold ${liveBpCategory.badgeClass}`}
+                    >
+                      <span
+                        className="h-1.5 w-1.5 rounded-full"
+                        style={{ backgroundColor: liveBpCategory.dotColor }}
+                      />
+                      {liveBpCategory.label}
+                    </span>
+                  )}
+                </div>
               </div>
 
               <div className="mt-2.5 grid grid-cols-1 gap-2.5 sm:grid-cols-2">
@@ -695,7 +814,11 @@ export function HeroCaptureCard({
                     <input
                       type="number"
                       inputMode="numeric"
-                      placeholder="120"
+                      placeholder={
+                        effectiveLastBpSys != null
+                          ? String(effectiveLastBpSys)
+                          : "120"
+                      }
                       value={bpSysInput}
                       onChange={(e) => setBpSysInput(e.target.value)}
                       className="w-16 rounded-xl border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-center text-sm font-extrabold tabular-nums text-slate-900 outline-none focus:border-rose-500 focus:bg-white dark:border-slate-700 dark:bg-slate-950 dark:text-white"
@@ -704,7 +827,11 @@ export function HeroCaptureCard({
                     <input
                       type="number"
                       inputMode="numeric"
-                      placeholder="80"
+                      placeholder={
+                        effectiveLastBpDia != null
+                          ? String(effectiveLastBpDia)
+                          : "80"
+                      }
                       value={bpDiaInput}
                       onChange={(e) => setBpDiaInput(e.target.value)}
                       className="w-16 rounded-xl border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-center text-sm font-extrabold tabular-nums text-slate-900 outline-none focus:border-rose-500 focus:bg-white dark:border-slate-700 dark:bg-slate-950 dark:text-white"
@@ -735,7 +862,11 @@ export function HeroCaptureCard({
                     <input
                       type="number"
                       inputMode="numeric"
-                      placeholder="např. 70"
+                      placeholder={
+                        effectiveLastPulseBpm != null
+                          ? String(effectiveLastPulseBpm)
+                          : "např. 70"
+                      }
                       value={pulseInput}
                       onChange={(e) => setPulseInput(e.target.value)}
                       className="w-20 rounded-xl border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-center text-sm font-extrabold tabular-nums text-slate-900 outline-none focus:border-rose-500 focus:bg-white dark:border-slate-700 dark:bg-slate-950 dark:text-white"

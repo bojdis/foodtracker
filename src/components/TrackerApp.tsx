@@ -377,24 +377,41 @@ export function TrackerApp({
     };
   }, [activePendingCount, fetchDayData]);
 
-  const { lastKnownWeightKg, lastKnownWaistCm, headerWeightDeltaKg } =
-    useMemo(() => {
-      const latestWithWeight = recentMeasurements.find(
-        (m) => typeof m.weight_kg === "number"
-      );
-      const latestWithWaist = recentMeasurements.find(
-        (m) => typeof m.waist_cm === "number"
-      );
-      const trend = computeWeightTrendSeries(recentMeasurements);
+  const {
+    lastKnownWeightKg,
+    lastKnownWaistCm,
+    lastKnownBpSys,
+    lastKnownBpDia,
+    lastKnownPulseBpm,
+    headerWeightDeltaKg,
+  } = useMemo(() => {
+    const latestWithWeight = recentMeasurements.find(
+      (m) => typeof m.weight_kg === "number"
+    );
+    const latestWithWaist = recentMeasurements.find(
+      (m) => typeof m.waist_cm === "number"
+    );
+    const latestWithBp = recentMeasurements.find(
+      (m) =>
+        typeof m.blood_pressure_sys === "number" &&
+        typeof m.blood_pressure_dia === "number"
+    );
+    const latestWithPulse = recentMeasurements.find(
+      (m) => typeof m.pulse_bpm === "number"
+    );
+    const trend = computeWeightTrendSeries(recentMeasurements);
 
-      return {
-        lastKnownWeightKg:
-          latestWithWeight?.weight_kg ?? profile?.weight_kg ?? null,
-        lastKnownWaistCm: latestWithWaist?.waist_cm ?? null,
-        headerWeightDeltaKg:
-          trend.points.length >= 2 ? trend.deltaFromStartKg : null,
-      };
-    }, [recentMeasurements, profile?.weight_kg]);
+    return {
+      lastKnownWeightKg:
+        latestWithWeight?.weight_kg ?? profile?.weight_kg ?? null,
+      lastKnownWaistCm: latestWithWaist?.waist_cm ?? null,
+      lastKnownBpSys: latestWithBp?.blood_pressure_sys ?? null,
+      lastKnownBpDia: latestWithBp?.blood_pressure_dia ?? null,
+      lastKnownPulseBpm: latestWithPulse?.pulse_bpm ?? null,
+      headerWeightDeltaKg:
+        trend.points.length >= 2 ? trend.deltaFromStartKg : null,
+    };
+  }, [recentMeasurements, profile?.weight_kg]);
 
   function applyUpdatedProfile(savedProfile: UserProfileRow) {
     setProfile(savedProfile);
@@ -485,6 +502,11 @@ export function TrackerApp({
         if (m.measured_date === selectedDate) {
           setDayMeasurement(m);
         }
+        setRecentMeasurements((prev) =>
+          [m, ...prev.filter((r) => r.measured_date !== m.measured_date)].sort(
+            (a, b) => b.measured_date.localeCompare(a.measured_date)
+          )
+        );
         setProgressRefreshSignal((n) => n + 1);
 
         const parts: string[] = [];
@@ -502,7 +524,7 @@ export function TrackerApp({
         }
         if (parts.length > 0) {
           showTemporaryFeedback(
-            `Měření uloženo (${parts.join(" · ")}) — najdeš ho v záložce Progres.`
+            `Měření uloženo (${parts.join(" · ")}) — zobrazeno v dnešním přehledu i v Progresu.`
           );
         }
         void fetchDayData(selectedDate, { silent: true });
@@ -575,6 +597,11 @@ export function TrackerApp({
 
       const m = res.data.measurement;
       setDayMeasurement(m);
+      setRecentMeasurements((prev) =>
+        [m, ...prev.filter((r) => r.measured_date !== m.measured_date)].sort(
+          (a, b) => b.measured_date.localeCompare(a.measured_date)
+        )
+      );
       if (res.data.updatedProfile) {
         applyUpdatedProfile(res.data.updatedProfile);
       }
@@ -1136,6 +1163,9 @@ export function TrackerApp({
               dayMeasurement={dayMeasurement}
               lastKnownWeightKg={lastKnownWeightKg}
               lastKnownWaistCm={lastKnownWaistCm}
+              lastKnownBpSys={lastKnownBpSys}
+              lastKnownBpDia={lastKnownBpDia}
+              lastKnownPulseBpm={lastKnownPulseBpm}
               feedbackBanner={heroFeedback}
               onDismissFeedback={() => setHeroFeedback(null)}
               onInputFocus={() => setCompassCollapseSignal((n) => n + 1)}
@@ -1211,6 +1241,8 @@ export function TrackerApp({
               energyUnit={energyUnit}
               deletingId={deletingId}
               retryingId={retryingId}
+              dayMeasurement={dayMeasurement}
+              onOpenProgressTab={() => setActiveTab("progress")}
               onDeleteEntry={handleDeleteEntry}
               onRetryEntry={handleRetryEntry}
             />

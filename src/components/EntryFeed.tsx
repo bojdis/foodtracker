@@ -2,20 +2,31 @@
 
 import { useEffect, useState } from "react";
 import {
+  Activity,
   AlertTriangle,
   ChevronDown,
   ChevronUp,
   Clock,
   Dumbbell,
   Flame,
+  Heart,
+  LineChart,
   Loader2,
   RefreshCw,
+  Ruler,
+  Scale,
   Sparkles,
   Trash2,
   Utensils,
   Zap,
 } from "lucide-react";
-import type { EnergyUnit, LogEntryWithItems, TimeSlot } from "@/lib/types";
+import type {
+  BodyMeasurementRow,
+  EnergyUnit,
+  LogEntryWithItems,
+  TimeSlot,
+} from "@/lib/types";
+import { getBloodPressureCategory } from "@/lib/types";
 import { formatEnergy, TIME_SLOT_LABELS_CS } from "@/lib/calculations";
 
 interface EntryFeedProps {
@@ -23,6 +34,8 @@ interface EntryFeedProps {
   energyUnit: EnergyUnit;
   deletingId: number | null;
   retryingId: number | null;
+  dayMeasurement?: BodyMeasurementRow | null;
+  onOpenProgressTab?: () => void;
   onDeleteEntry: (entryId: number) => void;
   onRetryEntry: (entryId: number) => void;
 }
@@ -56,11 +69,17 @@ function round1(val: number): number {
   return Math.round(val * 10) / 10;
 }
 
+function formatNumCs(val: number): string {
+  return val.toFixed(1).replace(".", ",").replace(/,0$/, "");
+}
+
 export function EntryFeed({
   entries,
   energyUnit,
   deletingId,
   retryingId,
+  dayMeasurement,
+  onOpenProgressTab,
   onDeleteEntry,
   onRetryEntry,
 }: EntryFeedProps) {
@@ -86,7 +105,23 @@ export function EntryFeed({
     setExpandedIds((prev) => ({ ...prev, [id]: !prev[id] }));
   }
 
-  if (entries.length === 0) {
+  const hasDayMeasurement =
+    dayMeasurement != null &&
+    (dayMeasurement.weight_kg != null ||
+      dayMeasurement.waist_cm != null ||
+      (dayMeasurement.blood_pressure_sys != null &&
+        dayMeasurement.blood_pressure_dia != null));
+
+  const bpCategory =
+    dayMeasurement?.blood_pressure_sys != null &&
+    dayMeasurement?.blood_pressure_dia != null
+      ? getBloodPressureCategory(
+          dayMeasurement.blood_pressure_sys,
+          dayMeasurement.blood_pressure_dia
+        )
+      : null;
+
+  if (entries.length === 0 && !hasDayMeasurement) {
     return (
       <section className="rounded-3xl border border-dashed border-slate-300/80 bg-white/60 px-5 py-7 text-center dark:border-slate-800 dark:bg-slate-900/40">
         <div className="mx-auto mb-2.5 flex h-10 w-10 items-center justify-center rounded-2xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
@@ -107,9 +142,83 @@ export function EntryFeed({
     <section className="space-y-2.5">
       <div className="flex items-center justify-between px-1">
         <h2 className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-          Časová osa záznamů ({entries.length})
+          Časová osa záznamů ({entries.length + (hasDayMeasurement ? 1 : 0)})
         </h2>
       </div>
+
+      {hasDayMeasurement && dayMeasurement && (
+        <article className="rounded-3xl border border-rose-500/25 bg-gradient-to-r from-rose-500/5 via-white/95 to-emerald-500/5 p-4 shadow-sm dark:border-rose-500/20 dark:from-rose-950/20 dark:via-slate-900/90 dark:to-emerald-950/20">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <span className="flex h-7 w-7 items-center justify-center rounded-xl bg-rose-500/15 text-rose-600 dark:text-rose-400">
+                <Heart className="h-3.5 w-3.5" />
+              </span>
+              <div>
+                <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-700 dark:text-slate-200">
+                  Naměřené hodnoty dne
+                </h3>
+              </div>
+            </div>
+
+            {onOpenProgressTab && (
+              <button
+                type="button"
+                onClick={onOpenProgressTab}
+                className="inline-flex items-center gap-1 rounded-xl border border-slate-200/80 bg-white px-2.5 py-1 text-[11px] font-bold text-slate-700 transition hover:border-emerald-500/40 hover:text-emerald-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
+              >
+                <LineChart className="h-3 w-3 text-emerald-500" />
+                <span>Grafy v Progresu →</span>
+              </button>
+            )}
+          </div>
+
+          <div className="mt-2.5 flex flex-wrap items-center gap-2">
+            {dayMeasurement.weight_kg != null && (
+              <span className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-500/25 bg-emerald-500/10 px-2.5 py-1 text-xs font-extrabold tabular-nums text-emerald-800 dark:text-emerald-200">
+                <Scale className="h-3.5 w-3.5 text-emerald-500" />
+                <span>Váha: {formatNumCs(dayMeasurement.weight_kg)} kg</span>
+              </span>
+            )}
+
+            {dayMeasurement.waist_cm != null && (
+              <span className="inline-flex items-center gap-1.5 rounded-xl border border-violet-500/25 bg-violet-500/10 px-2.5 py-1 text-xs font-extrabold tabular-nums text-violet-800 dark:text-violet-200">
+                <Ruler className="h-3.5 w-3.5 text-violet-500" />
+                <span>Pas: {formatNumCs(dayMeasurement.waist_cm)} cm</span>
+              </span>
+            )}
+
+            {dayMeasurement.blood_pressure_sys != null &&
+              dayMeasurement.blood_pressure_dia != null && (
+                <span className="inline-flex items-center gap-1.5 rounded-xl border border-rose-500/25 bg-rose-500/10 px-2.5 py-1 text-xs font-extrabold tabular-nums text-rose-800 dark:text-rose-200">
+                  <Heart className="h-3.5 w-3.5 text-rose-500" />
+                  <span>
+                    Tlak: {dayMeasurement.blood_pressure_sys}/
+                    {dayMeasurement.blood_pressure_dia} mmHg
+                  </span>
+                </span>
+              )}
+
+            {dayMeasurement.pulse_bpm != null && (
+              <span className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200/90 bg-slate-100/80 px-2.5 py-1 text-xs font-bold tabular-nums text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200">
+                <Activity className="h-3.5 w-3.5 text-rose-500" />
+                <span>Tep: {dayMeasurement.pulse_bpm} bpm</span>
+              </span>
+            )}
+
+            {bpCategory && (
+              <span
+                className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] font-bold ${bpCategory.badgeClass}`}
+              >
+                <span
+                  className="h-1.5 w-1.5 rounded-full"
+                  style={{ backgroundColor: bpCategory.dotColor }}
+                />
+                {bpCategory.label}
+              </span>
+            )}
+          </div>
+        </article>
+      )}
 
       {entries.map((entry) => {
         const isPending =

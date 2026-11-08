@@ -92,6 +92,41 @@ function daysBetweenUtc(startDateStr: string, endDateStr: string): number {
   return Math.round((t2 - t1) / 86_400_000);
 }
 
+const LAST_BP_STORAGE_KEY = "foodtracker_last_bp_v1";
+
+interface StoredBpValues {
+  sys: number | null;
+  dia: number | null;
+  pulse: number | null;
+}
+
+function readStoredBp(): StoredBpValues {
+  if (typeof window === "undefined") {
+    return { sys: null, dia: null, pulse: null };
+  }
+  try {
+    const raw = window.localStorage.getItem(LAST_BP_STORAGE_KEY);
+    if (!raw) return { sys: null, dia: null, pulse: null };
+    const parsed = JSON.parse(raw) as Partial<StoredBpValues>;
+    return {
+      sys: typeof parsed.sys === "number" ? parsed.sys : null,
+      dia: typeof parsed.dia === "number" ? parsed.dia : null,
+      pulse: typeof parsed.pulse === "number" ? parsed.pulse : null,
+    };
+  } catch {
+    return { sys: null, dia: null, pulse: null };
+  }
+}
+
+function writeStoredBp(values: StoredBpValues): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(LAST_BP_STORAGE_KEY, JSON.stringify(values));
+  } catch {
+    // ignore storage quota errors
+  }
+}
+
 export function BodyProgressView({
   profile,
   energyUnit,
@@ -106,6 +141,15 @@ export function BodyProgressView({
   const [dailySummaries, setDailySummaries] = useState<DailySummaryRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [storedBp, setStoredBp] = useState<StoredBpValues>({
+    sys: null,
+    dia: null,
+    pulse: null,
+  });
+
+  useEffect(() => {
+    setStoredBp(readStoredBp());
+  }, []);
 
   // Quick measurement form state
   const [measuredDate, setMeasuredDate] = useState<string>(todayDate);
@@ -191,51 +235,43 @@ export function BodyProgressView({
     [dailySummaries, profile?.target_deficit_kcal]
   );
 
-  // Pre-fill measurement inputs once data loads if empty
+  const effectiveLastBpSys = bpStats.latestSys ?? storedBp.sys;
+  const effectiveLastBpDia = bpStats.latestDia ?? storedBp.dia;
+  const effectiveLastPulseBpm = bpStats.latestPulse ?? storedBp.pulse;
+
+  // Pre-fill measurement inputs once data loads
   useEffect(() => {
     const existingForDay = measurements.find(
       (m) => m.measured_date === measuredDate
     );
-    if (existingForDay) {
-      setWeightInput(
-        existingForDay.weight_kg !== null ? String(existingForDay.weight_kg) : ""
-      );
-      setWaistInput(
-        existingForDay.waist_cm !== null ? String(existingForDay.waist_cm) : ""
-      );
-      setBpSysInput(
-        existingForDay.blood_pressure_sys !== null
-          ? String(existingForDay.blood_pressure_sys)
-          : ""
-      );
-      setBpDiaInput(
-        existingForDay.blood_pressure_dia !== null
-          ? String(existingForDay.blood_pressure_dia)
-          : ""
-      );
-      setPulseInput(
-        existingForDay.pulse_bpm !== null ? String(existingForDay.pulse_bpm) : ""
-      );
-      setNotesInput(existingForDay.notes ?? "");
-    } else {
-      setWeightInput(
-        weightStats.latestWeightKg !== null
-          ? String(weightStats.latestWeightKg)
-          : profile?.weight_kg
-            ? String(profile.weight_kg)
-            : ""
-      );
-      setWaistInput("");
-      setBpSysInput("");
-      setBpDiaInput("");
-      setPulseInput("");
-      setNotesInput("");
-    }
+
+    const nextWeight =
+      existingForDay?.weight_kg ??
+      weightStats.latestWeightKg ??
+      profile?.weight_kg ??
+      null;
+    const nextWaist = existingForDay?.waist_cm ?? null;
+    const nextSys =
+      existingForDay?.blood_pressure_sys ?? effectiveLastBpSys ?? null;
+    const nextDia =
+      existingForDay?.blood_pressure_dia ?? effectiveLastBpDia ?? null;
+    const nextPulse =
+      existingForDay?.pulse_bpm ?? effectiveLastPulseBpm ?? null;
+
+    setWeightInput(nextWeight !== null ? String(nextWeight) : "");
+    setWaistInput(nextWaist !== null ? String(nextWaist) : "");
+    setBpSysInput(nextSys !== null ? String(nextSys) : "");
+    setBpDiaInput(nextDia !== null ? String(nextDia) : "");
+    setPulseInput(nextPulse !== null ? String(nextPulse) : "");
+    setNotesInput(existingForDay?.notes ?? "");
   }, [
     measuredDate,
     measurements,
     weightStats.latestWeightKg,
     profile?.weight_kg,
+    effectiveLastBpSys,
+    effectiveLastBpDia,
+    effectiveLastPulseBpm,
   ]);
 
   function stepWeight(delta: number) {
@@ -258,19 +294,22 @@ export function BodyProgressView({
 
   function stepSys(delta: number) {
     const cur = parseInt(bpSysInput, 10);
-    const base = Number.isFinite(cur) && cur >= 60 ? cur : 120;
+    const base =
+      Number.isFinite(cur) && cur >= 60 ? cur : (effectiveLastBpSys ?? 120);
     setBpSysInput(String(Math.min(240, Math.max(70, base + delta))));
   }
 
   function stepDia(delta: number) {
     const cur = parseInt(bpDiaInput, 10);
-    const base = Number.isFinite(cur) && cur >= 40 ? cur : 80;
+    const base =
+      Number.isFinite(cur) && cur >= 40 ? cur : (effectiveLastBpDia ?? 80);
     setBpDiaInput(String(Math.min(150, Math.max(45, base + delta))));
   }
 
   function stepPulse(delta: number) {
     const cur = parseInt(pulseInput, 10);
-    const base = Number.isFinite(cur) && cur >= 35 ? cur : 70;
+    const base =
+      Number.isFinite(cur) && cur >= 35 ? cur : (effectiveLastPulseBpm ?? 70);
     setPulseInput(String(Math.min(200, Math.max(40, base + delta))));
   }
 
@@ -385,6 +424,15 @@ export function BodyProgressView({
       }
 
       const m = res.data.measurement;
+      if (m.blood_pressure_sys !== null && m.blood_pressure_dia !== null) {
+        const nextStored: StoredBpValues = {
+          sys: m.blood_pressure_sys,
+          dia: m.blood_pressure_dia,
+          pulse: m.pulse_bpm ?? effectiveLastPulseBpm ?? null,
+        };
+        setStoredBp(nextStored);
+        writeStoredBp(nextStored);
+      }
       const parts: string[] = [];
       if (m.weight_kg !== null) {
         parts.push(`váha ${formatNumCs(m.weight_kg)} kg`);
@@ -581,17 +629,41 @@ export function BodyProgressView({
                   Krevní tlak a tepová frekvence
                   <span className="font-normal text-slate-400">volitelné</span>
                 </label>
-                {liveBpCategory && (
-                  <span
-                    className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-bold ${liveBpCategory.badgeClass}`}
-                  >
+                <div className="flex flex-wrap items-center gap-2">
+                  {effectiveLastBpSys !== null &&
+                    effectiveLastBpDia !== null && (
+                      <span className="text-[11px] text-slate-400">
+                        poslední: {effectiveLastBpSys}/{effectiveLastBpDia} mmHg
+                        {effectiveLastPulseBpm !== null
+                          ? ` · ${effectiveLastPulseBpm} bpm`
+                          : ""}
+                      </span>
+                    )}
+                  {(bpSysInput || bpDiaInput || pulseInput) && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setBpSysInput("");
+                        setBpDiaInput("");
+                        setPulseInput("");
+                      }}
+                      className="text-[11px] font-semibold text-slate-400 hover:text-rose-500"
+                    >
+                      Vyčistit
+                    </button>
+                  )}
+                  {liveBpCategory && (
                     <span
-                      className="h-1.5 w-1.5 rounded-full"
-                      style={{ backgroundColor: liveBpCategory.dotColor }}
-                    />
-                    {liveBpCategory.label}
-                  </span>
-                )}
+                      className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-bold ${liveBpCategory.badgeClass}`}
+                    >
+                      <span
+                        className="h-1.5 w-1.5 rounded-full"
+                        style={{ backgroundColor: liveBpCategory.dotColor }}
+                      />
+                      {liveBpCategory.label}
+                    </span>
+                  )}
+                </div>
               </div>
 
               <div className="mt-2.5 grid grid-cols-1 gap-2.5 sm:grid-cols-2">
@@ -603,7 +675,11 @@ export function BodyProgressView({
                     <input
                       type="number"
                       inputMode="numeric"
-                      placeholder="120"
+                      placeholder={
+                        effectiveLastBpSys != null
+                          ? String(effectiveLastBpSys)
+                          : "120"
+                      }
                       value={bpSysInput}
                       onChange={(e) => setBpSysInput(e.target.value)}
                       className="w-16 rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-center text-sm font-extrabold tabular-nums text-slate-900 outline-none focus:border-rose-500 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
@@ -612,7 +688,11 @@ export function BodyProgressView({
                     <input
                       type="number"
                       inputMode="numeric"
-                      placeholder="80"
+                      placeholder={
+                        effectiveLastBpDia != null
+                          ? String(effectiveLastBpDia)
+                          : "80"
+                      }
                       value={bpDiaInput}
                       onChange={(e) => setBpDiaInput(e.target.value)}
                       className="w-16 rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-center text-sm font-extrabold tabular-nums text-slate-900 outline-none focus:border-rose-500 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
@@ -643,7 +723,11 @@ export function BodyProgressView({
                     <input
                       type="number"
                       inputMode="numeric"
-                      placeholder="např. 70"
+                      placeholder={
+                        effectiveLastPulseBpm != null
+                          ? String(effectiveLastPulseBpm)
+                          : "např. 70"
+                      }
                       value={pulseInput}
                       onChange={(e) => setPulseInput(e.target.value)}
                       className="w-20 rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-center text-sm font-extrabold tabular-nums text-slate-900 outline-none focus:border-rose-500 dark:border-slate-700 dark:bg-slate-900 dark:text-white"

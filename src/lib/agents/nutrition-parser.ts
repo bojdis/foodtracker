@@ -1,4 +1,5 @@
 import { GoogleGenAI } from "@google/genai";
+import { extractBodyMeasurementFromText } from "@/lib/body-parser";
 import { calculateActivityBurnedKcal } from "@/lib/calculations";
 import {
   buildPersonalPresetsSystemSection,
@@ -91,23 +92,56 @@ const PARSED_ENTRY_JSON_SCHEMA = {
     summary_title: {
       type: "string",
       description:
-        "Stručný český název celého záznamu (např. 'Míchaná vejce s chlebem a běh 30 min').",
+        "Stručný český název celého záznamu. U jídla např. 'Míchaná vejce s chlebem'. U fotky tlakoměru VŽDY zapiš přesné naměřené hodnoty přímo do názvu, např. 'Tlak 135/85 mmHg, tep 72'.",
     },
     canonical_meal_name: {
       type: "string",
       description:
-        "Kanonický český název pouze pro jídlo/nápoje bez sportu a bez gramáží (např. 'Ovesná kaše s banánem', 'Rohlík se šunkou'). Pokud záznam obsahuje pouze aktivitu, vynech.",
+        "Kanonický český název pouze pro jídlo/nápoje bez sportu a bez gramáží (např. 'Ovesná kaše s banánem', 'Rohlík se šunkou'). Pokud záznam obsahuje pouze aktivitu nebo měření tlaku/váhy, vynech.",
     },
     typical_time_slot: {
       type: "string",
       enum: ["morning", "lunch", "snack", "evening", "anytime"],
       description:
-        "Typická denní doba pro daný záznam: morning (snídaně), lunch (oběd), snack (svačina), evening (večeře), anytime (kdykoliv / čistý sport).",
+        "Typická denní doba pro daný záznam: morning (snídaně), lunch (oběd), snack (svačina), evening (večeře), anytime (kdykoliv / čistý sport / měření).",
     },
     ai_notes: {
       type: "string",
       description:
         "Krátká užitečná poznámka v češtině o použitých odhadech porcí nebo makrech (1 věta).",
+    },
+    detected_measurement: {
+      type: "object",
+      description:
+        "Povinný objekt pro hodnoty z displeje digitálního tlakoměru (SYS, DIA, PUL) nebo osobní váhy. Pokud na fotce NENÍ tlakoměr ani váha, nastav všechna 4 pole na 0!",
+      properties: {
+        blood_pressure_sys: {
+          type: "integer",
+          description:
+            "Systolický (horní/nejvyšší) tlak v mmHg z displeje tlakoměru (např. 125). Pokud na fotce není tlakoměr, vrať 0.",
+        },
+        blood_pressure_dia: {
+          type: "integer",
+          description:
+            "Diastolický (dolní/prostřední) tlak v mmHg z displeje tlakoměru (např. 82). Pokud na fotce není tlakoměr, vrať 0.",
+        },
+        pulse_bpm: {
+          type: "integer",
+          description:
+            "Tepová frekvence v tepech/min (PUL/PULSE, obvykle spodní číslo u symbolu srdce) z displeje tlakoměru (např. 72). Pokud není uvedena nebo nejde o tlakoměr, vrať 0.",
+        },
+        weight_kg: {
+          type: "number",
+          description:
+            "Hmotnost v kg z displeje osobní váhy (např. 98.4). Pokud na fotce není váha, vrať 0.",
+        },
+      },
+      required: [
+        "blood_pressure_sys",
+        "blood_pressure_dia",
+        "pulse_bpm",
+        "weight_kg",
+      ],
     },
     items: {
       type: "array",
@@ -188,31 +222,13 @@ const PARSED_ENTRY_JSON_SCHEMA = {
         ],
       },
     },
-    detected_measurement: {
-      type: "object",
-      description:
-        "Vyplň POUZE pokud fotka nebo text zachycuje displej digitálního tonometru (tlakoměru) nebo osobní váhy.",
-      properties: {
-        blood_pressure_sys: {
-          type: "integer",
-          description: "Systolický tlak v mmHg (SYS, např. 125)",
-        },
-        blood_pressure_dia: {
-          type: "integer",
-          description: "Diastolický tlak v mmHg (DIA, např. 82)",
-        },
-        pulse_bpm: {
-          type: "integer",
-          description: "Tepová frekvence v tepech/min (PUL/PULSE, např. 72)",
-        },
-        weight_kg: {
-          type: "number",
-          description: "Hmotnost v kg z displeje váhy",
-        },
-      },
-    },
   },
-  required: ["summary_title", "typical_time_slot", "items"],
+  required: [
+    "summary_title",
+    "typical_time_slot",
+    "detected_measurement",
+    "items",
+  ],
 };
 
 function round1(val: number): number {
@@ -292,13 +308,13 @@ function buildSystemInstruction(
     "- V ai_notes stručně uveď, že hodnoty byly vyčteny z etikety výrobku.",
     "",
     "PRAVIDLA PRO FOTKY DISPLEJE TLAKOMĚRU (TONOMETRU) NEBO OSOBNÍ VÁHY:",
-    "- Pokud je na fotce displej digitálního tonometru (např. Omron, Microlife, Beurer), který zobrazuje čísla SYS (systolický tlak), DIA (diastolický tlak) a PUL/PULSE (tep):",
-    "  * Vyplň 'detected_measurement' s čísly: blood_pressure_sys, blood_pressure_dia a případně pulse_bpm.",
-    "  * Ponech 'items': [] prázdné a 'summary_title': 'Měření krevního tlaku'.",
+    "- Pokud je na fotce displej digitálního tonometru (např. Omron, Microlife, Beurer, Hartmann), který zobrazuje čísla SYS (systolický/horní tlak), DIA (diastolický/dolní tlak) a případně PUL/PULSE (tep/min):",
+    "  * POVINNĚ vyplň v 'detected_measurement' přesná přečtená čísla: blood_pressure_sys, blood_pressure_dia, pulse_bpm (pokud tep není na displeji, dej 0) a weight_kg: 0.",
+    "  * POVINNĚ zapiš tyto naměřené hodnoty i přímo do 'summary_title' ve formátu 'Tlak SYS/DIA mmHg, tep PUL' (např. 'Tlak 135/85 mmHg, tep 72').",
+    "  * Ponech pole 'items': [] prázdné.",
     "- Pokud je na fotce displej osobní váhy (např. 98.4 kg):",
-    "  * Vyplň 'detected_measurement' s číslem: weight_kg.",
-    "  * Ponech 'items': [] prázdné a 'summary_title': 'Měření tělesné váhy'.",
-    "- U běžných fotek jídla/obalů ponech 'detected_measurement': null.",
+    "  * Vyplň v 'detected_measurement' číslo weight_kg (ostatní pole 0), 'summary_title': 'Váha 98,4 kg' a 'items': [].",
+    "- U běžných fotek jídla/etiket nebo čistého textu jídla nastav v 'detected_measurement' všechna pole na 0 (blood_pressure_sys: 0, blood_pressure_dia: 0, pulse_bpm: 0, weight_kg: 0).",
   ].join("\n");
 }
 
@@ -414,24 +430,61 @@ function normalizeAgentResult(
         : null,
     items: normalizedItems,
     detected_measurement: (() => {
-      if (!raw.detected_measurement || typeof raw.detected_measurement !== "object") {
-        return null;
-      }
-      const dm = raw.detected_measurement as Record<string, unknown>;
-      const sys = Number(dm.blood_pressure_sys);
-      const dia = Number(dm.blood_pressure_dia);
-      const pulse = Number(dm.pulse_bpm);
-      const weight = Number(dm.weight_kg);
+      let sys = NaN;
+      let dia = NaN;
+      let pulse = NaN;
+      let weight = NaN;
 
-      const hasBp = Number.isFinite(sys) && sys >= 60 && sys <= 260 && Number.isFinite(dia) && dia >= 40 && dia <= 160;
-      const hasWeight = Number.isFinite(weight) && weight >= 30 && weight <= 300;
+      if (raw.detected_measurement && typeof raw.detected_measurement === "object") {
+        const dm = raw.detected_measurement as Record<string, unknown>;
+        sys = Number(dm.blood_pressure_sys);
+        dia = Number(dm.blood_pressure_dia);
+        pulse = Number(dm.pulse_bpm);
+        weight = Number(dm.weight_kg);
+      }
+
+      let hasBp =
+        Number.isFinite(sys) &&
+        sys >= 60 &&
+        sys <= 260 &&
+        Number.isFinite(dia) &&
+        dia >= 40 &&
+        dia <= 160;
+      let hasWeight = Number.isFinite(weight) && weight >= 30 && weight <= 300;
+
+      // Secondary fallback: extract numbers from summary_title or ai_notes if Gemini wrote them in text
+      if (!hasBp && !hasWeight) {
+        const textFallback = extractBodyMeasurementFromText(
+          `${String(raw.summary_title ?? "")}, ${String(raw.ai_notes ?? "")}`
+        );
+        if (textFallback) {
+          if (
+            textFallback.blood_pressure_sys !== null &&
+            textFallback.blood_pressure_dia !== null
+          ) {
+            sys = textFallback.blood_pressure_sys;
+            dia = textFallback.blood_pressure_dia;
+            hasBp = true;
+          }
+          if (textFallback.pulse_bpm !== null) {
+            pulse = textFallback.pulse_bpm;
+          }
+          if (textFallback.weight_kg !== null) {
+            weight = textFallback.weight_kg;
+            hasWeight = true;
+          }
+        }
+      }
 
       if (!hasBp && !hasWeight) return null;
 
       return {
         blood_pressure_sys: hasBp ? Math.round(sys) : null,
         blood_pressure_dia: hasBp ? Math.round(dia) : null,
-        pulse_bpm: Number.isFinite(pulse) && pulse >= 35 && pulse <= 220 ? Math.round(pulse) : null,
+        pulse_bpm:
+          Number.isFinite(pulse) && pulse >= 35 && pulse <= 220
+            ? Math.round(pulse)
+            : null,
         weight_kg: hasWeight ? round1(weight) : null,
       };
     })(),
@@ -464,7 +517,7 @@ export async function parseEntryWithAgent(params: {
   if (keyStatus === "missing" || !apiKey) {
     if (params.imageBase64) {
       throw new Error(
-        "Pro analýzu fotek výživových štítků je vyžadován platný GEMINI_API_KEY a připojení k internetu."
+        "Pro analýzu fotek výživových štítků a tlakoměru je vyžadován platný GEMINI_API_KEY a připojení k internetu."
       );
     }
     return parseEntryFallback(params);
@@ -499,13 +552,21 @@ export async function parseEntryWithAgent(params: {
         )
       : undefined;
 
+    const trimmedRaw = params.rawText.trim();
+    const isGenericImagePrompt =
+      !trimmedRaw ||
+      trimmedRaw === "Fotka štítku nebo zařízení" ||
+      trimmedRaw === "Výživový štítek z fotky";
+
+    const imagePromptText = isGenericImagePrompt
+      ? "Analyzuj přiloženou fotku: 1) Pokud je na fotce displej tlakoměru (tonometru), přečti přesná čísla SYS (systolický tlak), DIA (diastolický tlak) a PUL/PULSE (tep) do objektu detected_measurement, zapiš je do summary_title (např. 'Tlak 135/85 mmHg, tep 72') a pole items nech prázdné []. 2) Pokud je na fotce osobní váha, přečti hmotnost v kg do detected_measurement.weight_kg a items nech []. 3) Pokud je na fotce výživový štítek, etiketa nebo jídlo, rozpadni ho na položky, gramáže a makroživiny v poli items a v detected_measurement nastav nuly."
+      : `${trimmedRaw} (Pokud je na fotce tlakoměr nebo váha, vyplň přesné hodnoty do detected_measurement; pokud jídlo/štítek, vyplň items.)`;
+
     const inputPayload = cleanBase64
       ? [
           {
             type: "text" as const,
-            text:
-              params.rawText.trim() ||
-              "Analyzuj tento výživový štítek nebo obal potraviny na fotce a rozpadni ho na položky, gramáže a makroživiny.",
+            text: imagePromptText,
           },
           {
             type: "image" as const,
@@ -513,7 +574,7 @@ export async function parseEntryWithAgent(params: {
             mime_type: (params.imageMimeType || "image/jpeg") as "image/jpeg",
           },
         ]
-      : params.rawText.trim();
+      : trimmedRaw;
 
     const interaction = await Promise.race([
       client.interactions.create({
