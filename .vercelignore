@@ -1,0 +1,7 @@
+.next
+.next-prod
+node_modules
+supabase
+*.tsbuildinfo
+.env
+.env*.local
