@@ -31,15 +31,18 @@ function translateAuthError(message: string): string {
   if (lower.includes("password should be at least")) {
     return "Heslo musí mít alespoň 6 znaků.";
   }
-  if (lower.includes("rate limit")) {
-    return "Příliš mnoho pokusů. Zkus to prosím za chvíli.";
+  if (lower.includes("rate limit") || lower.includes("for security purposes")) {
+    return "Příliš mnoho pokusů. Z bezpečnostních důvodů můžeš o odkaz požádat znovu za 60 sekund.";
+  }
+  if (lower.includes("user not found")) {
+    return "Účet s tímto e-mailem nebyl nalezen.";
   }
   return message;
 }
 
 export function AuthScreen({ initialError }: AuthScreenProps) {
   const router = useRouter();
-  const [mode, setMode] = useState<"signin" | "signup">("signin");
+  const [mode, setMode] = useState<"signin" | "signup" | "forgot">("signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
@@ -54,14 +57,39 @@ export function AuthScreen({ initialError }: AuthScreenProps) {
     setConfirmationNotice(null);
 
     const trimmedEmail = email.trim();
-    if (!trimmedEmail || password.length < 6) {
-      setError("Zadej platný e-mail a heslo o délce alespoň 6 znaků.");
+    if (!trimmedEmail) {
+      setError("Zadej prosím platný e-mail.");
+      return;
+    }
+
+    if (mode !== "forgot" && password.length < 6) {
+      setError("Heslo musí mít alespoň 6 znaků.");
       return;
     }
 
     setLoading(true);
     try {
       const supabase = createClient();
+
+      if (mode === "forgot") {
+        const emailRedirectTo = `${window.location.origin}/auth/confirm?next=/auth/reset-password`;
+        const { error: resetError } = await supabase.auth.resetPasswordForEmail(
+          trimmedEmail,
+          {
+            redirectTo: emailRedirectTo,
+          }
+        );
+
+        if (resetError) {
+          setError(translateAuthError(resetError.message));
+          return;
+        }
+
+        setConfirmationNotice(
+          "Odkaz pro obnovu hesla byl odeslán na tvůj e-mail! Zkontroluj prosím doručenou poštu i spam."
+        );
+        return;
+      }
 
       if (mode === "signin") {
         const { error: signInError } = await supabase.auth.signInWithPassword({
@@ -127,36 +155,55 @@ export function AuthScreen({ initialError }: AuthScreenProps) {
         </div>
 
         <div className="rounded-3xl border border-slate-200/80 bg-white/90 p-6 shadow-xl shadow-slate-900/5 backdrop-blur-xl dark:border-slate-800/80 dark:bg-slate-900/85">
-          <div className="mb-5 grid grid-cols-2 rounded-2xl bg-slate-100 p-1 dark:bg-slate-800/80">
-            <button
-              type="button"
-              onClick={() => {
-                setMode("signin");
-                setError(null);
-              }}
-              className={`rounded-xl py-2.5 text-sm font-semibold transition ${
-                mode === "signin"
-                  ? "bg-white text-slate-900 shadow-sm dark:bg-slate-950 dark:text-white"
-                  : "text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200"
-              }`}
-            >
-              Přihlášení
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setMode("signup");
-                setError(null);
-              }}
-              className={`rounded-xl py-2.5 text-sm font-semibold transition ${
-                mode === "signup"
-                  ? "bg-white text-slate-900 shadow-sm dark:bg-slate-950 dark:text-white"
-                  : "text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200"
-              }`}
-            >
-              První registrace
-            </button>
-          </div>
+          {mode === "forgot" ? (
+            <div className="mb-5 flex items-center justify-between">
+              <span className="text-sm font-bold text-slate-900 dark:text-white">
+                Obnova zapomenutého hesla
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  setMode("signin");
+                  setError(null);
+                  setConfirmationNotice(null);
+                }}
+                className="text-xs font-semibold text-emerald-600 hover:underline dark:text-emerald-400"
+              >
+                ← Zpět na přihlášení
+              </button>
+            </div>
+          ) : (
+            <div className="mb-5 grid grid-cols-2 rounded-2xl bg-slate-100 p-1 dark:bg-slate-800/80">
+              <button
+                type="button"
+                onClick={() => {
+                  setMode("signin");
+                  setError(null);
+                }}
+                className={`rounded-xl py-2.5 text-sm font-semibold transition ${
+                  mode === "signin"
+                    ? "bg-white text-slate-900 shadow-sm dark:bg-slate-950 dark:text-white"
+                    : "text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200"
+                }`}
+              >
+                Přihlášení
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setMode("signup");
+                  setError(null);
+                }}
+                className={`rounded-xl py-2.5 text-sm font-semibold transition ${
+                  mode === "signup"
+                    ? "bg-white text-slate-900 shadow-sm dark:bg-slate-950 dark:text-white"
+                    : "text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200"
+                }`}
+              >
+                První registrace
+              </button>
+            </div>
+          )}
 
           {confirmationNotice && (
             <div className="mb-4 flex items-start gap-2.5 rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-3.5 text-sm text-emerald-800 dark:text-emerald-200">
@@ -195,30 +242,47 @@ export function AuthScreen({ initialError }: AuthScreenProps) {
               </div>
             </div>
 
-            <div>
-              <label
-                htmlFor="auth-password"
-                className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400"
-              >
-                Heslo
-              </label>
-              <div className="relative">
-                <Lock className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-                <input
-                  id="auth-password"
-                  type="password"
-                  autoComplete={
-                    mode === "signin" ? "current-password" : "new-password"
-                  }
-                  required
-                  minLength={6}
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="Minimálně 6 znaků"
-                  className="w-full rounded-2xl border border-slate-200 bg-slate-50 py-3 pl-10 pr-4 text-base text-slate-900 outline-none transition focus:border-emerald-500 focus:bg-white focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700/80 dark:bg-slate-950/60 dark:text-white dark:focus:border-emerald-400"
-                />
+            {mode !== "forgot" && (
+              <div>
+                <label
+                  htmlFor="auth-password"
+                  className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400"
+                >
+                  Heslo
+                </label>
+                <div className="relative">
+                  <Lock className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                  <input
+                    id="auth-password"
+                    type="password"
+                    autoComplete={
+                      mode === "signin" ? "current-password" : "new-password"
+                    }
+                    required
+                    minLength={6}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="Minimálně 6 znaků"
+                    className="w-full rounded-2xl border border-slate-200 bg-slate-50 py-3 pl-10 pr-4 text-base text-slate-900 outline-none transition focus:border-emerald-500 focus:bg-white focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700/80 dark:bg-slate-950/60 dark:text-white dark:focus:border-emerald-400"
+                  />
+                </div>
+                {mode === "signin" && (
+                  <div className="mt-1.5 flex justify-end">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setMode("forgot");
+                        setError(null);
+                        setConfirmationNotice(null);
+                      }}
+                      className="text-xs font-semibold text-emerald-600 transition hover:text-emerald-700 dark:text-emerald-400 dark:hover:text-emerald-300"
+                    >
+                      Zapomněl(a) jsi heslo?
+                    </button>
+                  </div>
+                )}
               </div>
-            </div>
+            )}
 
             <button
               type="submit"
@@ -226,9 +290,22 @@ export function AuthScreen({ initialError }: AuthScreenProps) {
               className="flex w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-emerald-500 to-teal-600 px-4 py-3.5 text-sm font-semibold text-white shadow-lg shadow-emerald-500/25 transition hover:from-emerald-600 hover:to-teal-700 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60"
             >
               {loading && <Loader2 className="h-4 w-4 animate-spin" />}
-              {mode === "signin" ? "Přihlásit se" : "Vytvořit účet vlastníka"}
+              {mode === "signin"
+                ? "Přihlásit se"
+                : mode === "signup"
+                  ? "Vytvořit účet vlastníka"
+                  : "Odeslat odkaz pro obnovu"}
             </button>
           </form>
+
+          {mode === "forgot" && (
+            <div className="mt-4 text-center">
+              <p className="text-xs leading-relaxed text-slate-500 dark:text-slate-400">
+                Na zadaný e-mail ti zašleme bezpečný odkaz pro nastavení nového
+                hesla.
+              </p>
+            </div>
+          )}
 
           {mode === "signup" && (
             <p className="mt-4 text-center text-xs leading-relaxed text-slate-500 dark:text-slate-400">

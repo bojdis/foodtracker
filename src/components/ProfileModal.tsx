@@ -7,7 +7,9 @@ import {
   AlertCircle,
   Check,
   Flame,
+  KeyRound,
   Loader2,
+  Lock,
   LogOut,
   Scale,
   Sparkles,
@@ -15,6 +17,7 @@ import {
   X,
   Zap,
 } from "lucide-react";
+import { createClient } from "@/lib/supabase/client";
 import type {
   ActivityLevel,
   EnergyUnit,
@@ -119,6 +122,49 @@ export function ProfileModal({
   const [saving, setSaving] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // In-app password change
+  const [showPasswordChange, setShowPasswordChange] = useState(false);
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmNewPassword, setConfirmNewPassword] = useState("");
+  const [passwordError, setPasswordError] = useState<string | null>(null);
+  const [passwordSuccess, setPasswordSuccess] = useState<string | null>(null);
+  const [savingPassword, setSavingPassword] = useState(false);
+
+  async function handlePasswordChange(e: FormEvent) {
+    e.preventDefault();
+    setPasswordError(null);
+    setPasswordSuccess(null);
+
+    if (newPassword.length < 6) {
+      setPasswordError("Heslo musí mít alespoň 6 znaků.");
+      return;
+    }
+    if (newPassword !== confirmNewPassword) {
+      setPasswordError("Hesla se neshodují.");
+      return;
+    }
+
+    setSavingPassword(true);
+    try {
+      const supabase = createClient();
+      const { error: updateError } = await supabase.auth.updateUser({
+        password: newPassword,
+      });
+      if (updateError) {
+        setPasswordError(updateError.message);
+        return;
+      }
+      setPasswordSuccess("Heslo bylo úspěšně změněno!");
+      setNewPassword("");
+      setConfirmNewPassword("");
+      setTimeout(() => setPasswordSuccess(null), 3000);
+    } catch {
+      setPasswordError("Nepodařilo se změnit heslo.");
+    } finally {
+      setSavingPassword(false);
+    }
+  }
 
   useEffect(() => {
     if (!initialProfile) return;
@@ -799,6 +845,75 @@ export function ProfileModal({
               </div>
             </div>
           </div>
+
+          {/* Collapsible Change Password */}
+          {!isOnboarding && (
+            <div className="rounded-2xl border border-slate-200/80 bg-slate-50/70 p-3.5 dark:border-slate-800 dark:bg-slate-950/40">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-700 dark:text-slate-300">
+                  <KeyRound className="h-3.5 w-3.5 text-emerald-500" />
+                  <span>Změna přihlašovacího hesla</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowPasswordChange((prev) => !prev);
+                    setPasswordError(null);
+                    setPasswordSuccess(null);
+                  }}
+                  className="text-xs font-semibold text-emerald-600 hover:underline dark:text-emerald-400"
+                >
+                  {showPasswordChange ? "Zavřít" : "Změnit heslo"}
+                </button>
+              </div>
+
+              {showPasswordChange && (
+                <div className="mt-3 space-y-3 pt-2">
+                  {passwordSuccess && (
+                    <div className="flex items-center gap-2 rounded-xl bg-emerald-500/10 p-2.5 text-xs font-semibold text-emerald-700 dark:text-emerald-300">
+                      <Check className="h-4 w-4 shrink-0 text-emerald-500" />
+                      <span>{passwordSuccess}</span>
+                    </div>
+                  )}
+                  {passwordError && (
+                    <div className="flex items-center gap-2 rounded-xl bg-rose-500/10 p-2.5 text-xs font-semibold text-rose-700 dark:text-rose-300">
+                      <AlertCircle className="h-4 w-4 shrink-0 text-rose-500" />
+                      <span>{passwordError}</span>
+                    </div>
+                  )}
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                    <input
+                      type="password"
+                      placeholder="Nové heslo (min. 6 znaků)"
+                      value={newPassword}
+                      onChange={(e) => setNewPassword(e.target.value)}
+                      className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-emerald-500 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
+                    />
+                    <input
+                      type="password"
+                      placeholder="Potvrzení hesla"
+                      value={confirmNewPassword}
+                      onChange={(e) => setConfirmNewPassword(e.target.value)}
+                      className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-emerald-500 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
+                    />
+                  </div>
+                  <div className="flex justify-end">
+                    <button
+                      type="button"
+                      disabled={savingPassword || !newPassword}
+                      onClick={handlePasswordChange}
+                      className="inline-flex items-center gap-1.5 rounded-xl bg-slate-900 px-3.5 py-1.5 text-xs font-semibold text-white transition hover:bg-slate-800 disabled:opacity-50 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-white"
+                    >
+                      {savingPassword && (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      )}
+                      Uložit nové heslo
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
 
           <button
             type="submit"
