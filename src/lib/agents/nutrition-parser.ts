@@ -1336,29 +1336,33 @@ export function parseEntryFallback(
     } else {
       const explicitKjMatch = fullAscii.match(/(\d+(?:\.\d+)?)\s*kj\b/);
       const explicitKcalMatch = fullAscii.match(/(\d+(?:\.\d+)?)\s*kcal\b/);
-      const { portionGrams, multiplier } = extractFoodAmount(fullAscii, 250);
-      const resolvedKcal = explicitKjMatch
-        ? Math.max(0, Math.round(Number(explicitKjMatch[1]) / 4.184))
-        : explicitKcalMatch
-          ? Math.max(0, Math.round(Number(explicitKcalMatch[1])))
-          : Math.max(0, Math.round(320 * multiplier));
-      const energyRatio = resolvedKcal / 320;
 
-      parsedItems.push({
-        item_kind: "food",
-        item_name: cleanTitle,
-        canonical_name: cleanTitle,
-        portion_grams: portionGrams,
-        duration_minutes: null,
-        met_value: null,
-        kcal: resolvedKcal,
-        burned_kcal: 0,
-        protein_g: round1(16 * energyRatio),
-        carbs_g: round1(35 * energyRatio),
-        fat_g: round1(12 * energyRatio),
-        fiber_g: round1(3 * energyRatio),
-        confidence: explicitKjMatch || explicitKcalMatch ? 0.9 : 0.45,
-      });
+      if (explicitKjMatch || explicitKcalMatch) {
+        const { portionGrams } = extractFoodAmount(fullAscii, 100);
+        const resolvedKcal = explicitKjMatch
+          ? Math.max(0, Math.round(Number(explicitKjMatch[1]) / 4.184))
+          : Math.max(0, Math.round(Number(explicitKcalMatch![1])));
+
+        parsedItems.push({
+          item_kind: "food",
+          item_name: cleanTitle,
+          canonical_name: cleanTitle,
+          portion_grams: portionGrams > 0 ? portionGrams : null,
+          duration_minutes: null,
+          met_value: null,
+          kcal: resolvedKcal,
+          burned_kcal: 0,
+          protein_g: 0,
+          carbs_g: 0,
+          fat_g: 0,
+          fiber_g: 0,
+          confidence: 0.9,
+        });
+      } else {
+        throw new Error(
+          "Jídlo nebylo rozpoznáno v lokálním offline slovníku a AI model byl nedostupný. Až budeš na signálu, klikni na „Zkusit znovu“, nebo doplň kalorickou hodnotu (např. 250 kcal)."
+        );
+      }
     }
   }
 

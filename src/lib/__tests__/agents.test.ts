@@ -190,6 +190,29 @@ describe("nutrition-parser fallback & MET calculations", () => {
     expect(totalKcal).toBeGreaterThan(1500);
     expect(totalKcal).toBeLessThan(2600);
   });
+
+  it("throws clear error for unknown food in fallback mode instead of fabricating fake calories", () => {
+    expect(() =>
+      parseEntryFallback({
+        rawText: "lososový tatarák s avokádovou pěnou",
+        userWeightKg: 80,
+        fallbackTimeSlot: "evening",
+      })
+    ).toThrowError(/Jídlo nebylo rozpoznáno v lokálním offline slovníku/);
+  });
+
+  it("parses explicit calories for unknown food in fallback mode without fabricating macros", () => {
+    const res = parseEntryFallback({
+      rawText: "exotický raw snack 210 kcal",
+      userWeightKg: 80,
+      fallbackTimeSlot: "snack",
+    });
+
+    expect(res.items).toHaveLength(1);
+    expect(res.items[0].kcal).toBe(210);
+    expect(res.items[0].protein_g).toBe(0);
+    expect(res.items[0].carbs_g).toBe(0);
+  });
 });
 
 describe("habit-detector signature normalization & promotion", () => {
