@@ -494,6 +494,12 @@ export function TrackerApp({
         if (m.waist_cm !== null) {
           parts.push(`pas ${formatNumCs(m.waist_cm)} cm`);
         }
+        if (m.blood_pressure_sys !== null && m.blood_pressure_dia !== null) {
+          parts.push(`tlak ${m.blood_pressure_sys}/${m.blood_pressure_dia}`);
+        }
+        if (m.pulse_bpm !== null) {
+          parts.push(`tep ${m.pulse_bpm}`);
+        }
         if (parts.length > 0) {
           showTemporaryFeedback(
             `Měření uloženo (${parts.join(" · ")}) — najdeš ho v záložce Progres.`
@@ -537,6 +543,9 @@ export function TrackerApp({
   async function handleSaveQuickMeasurement(payload: {
     weight_kg: number | null;
     waist_cm: number | null;
+    blood_pressure_sys?: number | null;
+    blood_pressure_dia?: number | null;
+    pulse_bpm?: number | null;
   }): Promise<boolean> {
     setActionError(null);
     setSavingMeasurement(true);
@@ -553,6 +562,9 @@ export function TrackerApp({
           measured_date: selectedDate,
           weight_kg: payload.weight_kg ?? undefined,
           waist_cm: payload.waist_cm ?? undefined,
+          blood_pressure_sys: payload.blood_pressure_sys ?? undefined,
+          blood_pressure_dia: payload.blood_pressure_dia ?? undefined,
+          pulse_bpm: payload.pulse_bpm ?? undefined,
         }),
       });
 
@@ -573,6 +585,12 @@ export function TrackerApp({
       }
       if (m.waist_cm !== null) {
         parts.push(`pas ${formatNumCs(m.waist_cm)} cm`);
+      }
+      if (m.blood_pressure_sys !== null && m.blood_pressure_dia !== null) {
+        parts.push(`tlak ${m.blood_pressure_sys}/${m.blood_pressure_dia}`);
+      }
+      if (m.pulse_bpm !== null) {
+        parts.push(`tep ${m.pulse_bpm}`);
       }
       showTemporaryFeedback(`Uloženo: ${parts.join(" · ")}`);
       setProgressRefreshSignal((n) => n + 1);

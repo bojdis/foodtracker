@@ -111,7 +111,7 @@ const PARSED_ENTRY_JSON_SCHEMA = {
     },
     items: {
       type: "array",
-      minItems: 1,
+      minItems: 0,
       items: {
         type: "object",
         properties: {
@@ -186,6 +186,29 @@ const PARSED_ENTRY_JSON_SCHEMA = {
           "fiber_g",
           "confidence",
         ],
+      },
+    },
+    detected_measurement: {
+      type: "object",
+      description:
+        "Vyplň POUZE pokud fotka nebo text zachycuje displej digitálního tonometru (tlakoměru) nebo osobní váhy.",
+      properties: {
+        blood_pressure_sys: {
+          type: "integer",
+          description: "Systolický tlak v mmHg (SYS, např. 125)",
+        },
+        blood_pressure_dia: {
+          type: "integer",
+          description: "Diastolický tlak v mmHg (DIA, např. 82)",
+        },
+        pulse_bpm: {
+          type: "integer",
+          description: "Tepová frekvence v tepech/min (PUL/PULSE, např. 72)",
+        },
+        weight_kg: {
+          type: "number",
+          description: "Hmotnost v kg z displeje váhy",
+        },
       },
     },
   },
@@ -267,6 +290,15 @@ function buildSystemInstruction(
     "- POZOR NA 100 G vs. CELÁ PORCE/BALENÍ: Výrobci často uvádí hodnoty na 100 g i na celou porci/balení (např. 1 láhev = 330 ml / 400 kcal, sendvič = 185 g). Pokud uživatel v doplňujícím textu neuvede jinak (např. 'vypil jsem jen půlku'), VŽDY propočítej a ulož hodnoty pro CELÉ spotřebované balení/porci!",
     "- V canonical_name a item_name uveď přesný český název výrobku (např. 'Mana Drink', 'Krůtí sendvič').",
     "- V ai_notes stručně uveď, že hodnoty byly vyčteny z etikety výrobku.",
+    "",
+    "PRAVIDLA PRO FOTKY DISPLEJE TLAKOMĚRU (TONOMETRU) NEBO OSOBNÍ VÁHY:",
+    "- Pokud je na fotce displej digitálního tonometru (např. Omron, Microlife, Beurer), který zobrazuje čísla SYS (systolický tlak), DIA (diastolický tlak) a PUL/PULSE (tep):",
+    "  * Vyplň 'detected_measurement' s čísly: blood_pressure_sys, blood_pressure_dia a případně pulse_bpm.",
+    "  * Ponech 'items': [] prázdné a 'summary_title': 'Měření krevního tlaku'.",
+    "- Pokud je na fotce displej osobní váhy (např. 98.4 kg):",
+    "  * Vyplň 'detected_measurement' s číslem: weight_kg.",
+    "  * Ponech 'items': [] prázdné a 'summary_title': 'Měření tělesné váhy'.",
+    "- U běžných fotek jídla/obalů ponech 'detected_measurement': null.",
   ].join("\n");
 }
 
@@ -381,6 +413,28 @@ function normalizeAgentResult(
         ? raw.ai_notes.trim()
         : null,
     items: normalizedItems,
+    detected_measurement: (() => {
+      if (!raw.detected_measurement || typeof raw.detected_measurement !== "object") {
+        return null;
+      }
+      const dm = raw.detected_measurement as Record<string, unknown>;
+      const sys = Number(dm.blood_pressure_sys);
+      const dia = Number(dm.blood_pressure_dia);
+      const pulse = Number(dm.pulse_bpm);
+      const weight = Number(dm.weight_kg);
+
+      const hasBp = Number.isFinite(sys) && sys >= 60 && sys <= 260 && Number.isFinite(dia) && dia >= 40 && dia <= 160;
+      const hasWeight = Number.isFinite(weight) && weight >= 30 && weight <= 300;
+
+      if (!hasBp && !hasWeight) return null;
+
+      return {
+        blood_pressure_sys: hasBp ? Math.round(sys) : null,
+        blood_pressure_dia: hasBp ? Math.round(dia) : null,
+        pulse_bpm: Number.isFinite(pulse) && pulse >= 35 && pulse <= 220 ? Math.round(pulse) : null,
+        weight_kg: hasWeight ? round1(weight) : null,
+      };
+    })(),
   };
 
   return ParsedEntryResultSchema.parse(resultCandidate);

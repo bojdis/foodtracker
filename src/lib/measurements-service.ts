@@ -58,6 +58,18 @@ export async function upsertBodyMeasurementAndSyncProfile(
     input.waist_cm !== undefined && input.waist_cm !== null
       ? input.waist_cm
       : (existingRow?.waist_cm ?? null);
+  const mergedSys =
+    input.blood_pressure_sys !== undefined && input.blood_pressure_sys !== null
+      ? input.blood_pressure_sys
+      : (existingRow?.blood_pressure_sys ?? null);
+  const mergedDia =
+    input.blood_pressure_dia !== undefined && input.blood_pressure_dia !== null
+      ? input.blood_pressure_dia
+      : (existingRow?.blood_pressure_dia ?? null);
+  const mergedPulse =
+    input.pulse_bpm !== undefined && input.pulse_bpm !== null
+      ? input.pulse_bpm
+      : (existingRow?.pulse_bpm ?? null);
   const mergedNotes =
     input.notes !== undefined ? input.notes : (existingRow?.notes ?? null);
 
@@ -73,6 +85,9 @@ export async function upsertBodyMeasurementAndSyncProfile(
           mergedWeight !== null ? Math.round(mergedWeight * 10) / 10 : null,
         waist_cm:
           mergedWaist !== null ? Math.round(mergedWaist * 10) / 10 : null,
+        blood_pressure_sys: mergedSys,
+        blood_pressure_dia: mergedDia,
+        pulse_bpm: mergedPulse,
         notes: mergedNotes,
         updated_at: nowIso,
       },

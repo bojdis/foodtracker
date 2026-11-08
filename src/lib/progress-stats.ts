@@ -1,4 +1,9 @@
-import type { BodyMeasurementRow, DailySummaryRow } from "./types";
+import type {
+  BloodPressureCategoryInfo,
+  BodyMeasurementRow,
+  DailySummaryRow,
+} from "./types";
+import { getBloodPressureCategory } from "./types";
 import { shiftDateString } from "./calculations";
 
 export interface WeightTrendPoint {
@@ -52,6 +57,33 @@ export interface CalorieBalanceStatsSummary {
   avgIntakeKcal: number | null;
   avgBurnedKcal: number | null;
   daysOnTargetCount: number;
+}
+
+export interface BloodPressureTrendPoint {
+  date: string;
+  sys: number;
+  dia: number;
+  pulse: number | null;
+  movingAvgSys7d: number;
+  movingAvgDia7d: number;
+}
+
+export interface BloodPressureStatsSummary {
+  points: BloodPressureTrendPoint[];
+  latestDate: string | null;
+  latestSys: number | null;
+  latestDia: number | null;
+  latestPulse: number | null;
+  latestCategory: BloodPressureCategoryInfo | null;
+  avg7dSys: number | null;
+  avg7dDia: number | null;
+  avg7dPulse: number | null;
+  avg7dCategory: BloodPressureCategoryInfo | null;
+  startSys: number | null;
+  startDia: number | null;
+  deltaFromStartSys: number | null;
+  deltaFromStartDia: number | null;
+  weightCorrelationInsight: string | null;
 }
 
 function round1(val: number): number {
@@ -283,5 +315,148 @@ export function computeLoggedCalorieBalanceStats(
     avgIntakeKcal: Math.round(sumIntake / points.length),
     avgBurnedKcal: Math.round(sumBurned / points.length),
     daysOnTargetCount,
+  };
+}
+
+/**
+ * Computes systolic/diastolic blood pressure trends, 7-day moving averages,
+ * latest clinical ESC classification, and correlation with weight loss.
+ */
+export function computeBloodPressureStats(
+  measurements: BodyMeasurementRow[]
+): BloodPressureStatsSummary {
+  const valid = measurements
+    .filter(
+      (
+        row
+      ): row is BodyMeasurementRow & {
+        blood_pressure_sys: number;
+        blood_pressure_dia: number;
+      } =>
+        typeof row.blood_pressure_sys === "number" &&
+        Number.isFinite(row.blood_pressure_sys) &&
+        typeof row.blood_pressure_dia === "number" &&
+        Number.isFinite(row.blood_pressure_dia)
+    )
+    .slice()
+    .sort((a, b) => a.measured_date.localeCompare(b.measured_date));
+
+  if (valid.length === 0) {
+    return {
+      points: [],
+      latestDate: null,
+      latestSys: null,
+      latestDia: null,
+      latestPulse: null,
+      latestCategory: null,
+      avg7dSys: null,
+      avg7dDia: null,
+      avg7dPulse: null,
+      avg7dCategory: null,
+      startSys: null,
+      startDia: null,
+      deltaFromStartSys: null,
+      deltaFromStartDia: null,
+      weightCorrelationInsight: null,
+    };
+  }
+
+  const points: BloodPressureTrendPoint[] = valid.map((row, idx) => {
+    const windowStart = shiftDateString(row.measured_date, -6);
+    let sumSys = 0;
+    let sumDia = 0;
+    let count = 0;
+    for (let j = idx; j >= 0; j--) {
+      if (valid[j].measured_date < windowStart) break;
+      sumSys += valid[j].blood_pressure_sys;
+      sumDia += valid[j].blood_pressure_dia;
+      count++;
+    }
+    return {
+      date: row.measured_date,
+      sys: row.blood_pressure_sys,
+      dia: row.blood_pressure_dia,
+      pulse: row.pulse_bpm ?? null,
+      movingAvgSys7d: round1(sumSys / count),
+      movingAvgDia7d: round1(sumDia / count),
+    };
+  });
+
+  const latest = valid[valid.length - 1];
+  const first = valid[0];
+
+  const latestCategory = getBloodPressureCategory(
+    latest.blood_pressure_sys,
+    latest.blood_pressure_dia
+  );
+
+  // Recent 7-day window average for top summary
+  const last7dStart = shiftDateString(latest.measured_date, -6);
+  const recent7dRows = valid.filter((r) => r.measured_date >= last7dStart);
+  const avg7dSys = Math.round(
+    recent7dRows.reduce((acc, r) => acc + r.blood_pressure_sys, 0) /
+      recent7dRows.length
+  );
+  const avg7dDia = Math.round(
+    recent7dRows.reduce((acc, r) => acc + r.blood_pressure_dia, 0) /
+      recent7dRows.length
+  );
+  const rowsWithPulse = recent7dRows.filter(
+    (r) => typeof r.pulse_bpm === "number" && r.pulse_bpm > 0
+  );
+  const avg7dPulse =
+    rowsWithPulse.length > 0
+      ? Math.round(
+          rowsWithPulse.reduce((acc, r) => acc + (r.pulse_bpm ?? 0), 0) /
+            rowsWithPulse.length
+        )
+      : null;
+
+  const avg7dCategory = getBloodPressureCategory(avg7dSys, avg7dDia);
+
+  const deltaFromStartSys = latest.blood_pressure_sys - first.blood_pressure_sys;
+  const deltaFromStartDia = latest.blood_pressure_dia - first.blood_pressure_dia;
+
+  // Weight correlation insight
+  let weightCorrelationInsight: string | null = null;
+  const weightRows = measurements
+    .filter(
+      (r): r is BodyMeasurementRow & { weight_kg: number } =>
+        typeof r.weight_kg === "number" && Number.isFinite(r.weight_kg)
+    )
+    .sort((a, b) => a.measured_date.localeCompare(b.measured_date));
+
+  if (weightRows.length >= 2 && valid.length >= 2) {
+    const startW = weightRows[0].weight_kg;
+    const latestW = weightRows[weightRows.length - 1].weight_kg;
+    const weightLostKg = round1(startW - latestW);
+
+    if (weightLostKg > 0.5 && deltaFromStartSys < 0) {
+      weightCorrelationInsight = `Při poklesu hmotnosti o ${weightLostKg} kg klesl systolický tlak o ${Math.abs(deltaFromStartSys)} mmHg. Každý shozený kilogram znatelně ulehčuje práci srdci a cévám.`;
+    } else if (latestCategory.category === "optimal") {
+      weightCorrelationInsight =
+        "Tvůj krevní tlak je v optimálním pásmu (< 120/80 mmHg). Výborná kardiovaskulární kondice!";
+    }
+  } else if (latestCategory.category === "optimal") {
+    weightCorrelationInsight =
+      "Tvůj krevní tlak je v optimálním pásmu (< 120/80 mmHg). Výborná kardiovaskulární kondice!";
+  }
+
+  return {
+    points,
+    latestDate: latest.measured_date,
+    latestSys: latest.blood_pressure_sys,
+    latestDia: latest.blood_pressure_dia,
+    latestPulse: latest.pulse_bpm ?? null,
+    latestCategory,
+    avg7dSys,
+    avg7dDia,
+    avg7dPulse,
+    avg7dCategory,
+    startSys: first.blood_pressure_sys,
+    startDia: first.blood_pressure_dia,
+    deltaFromStartSys,
+    deltaFromStartDia,
+    weightCorrelationInsight,
   };
 }

@@ -76,30 +76,39 @@ export type Database = {
       }
       body_measurements: {
         Row: {
+          blood_pressure_dia: number | null
+          blood_pressure_sys: number | null
           created_at: string
           id: number
           measured_date: string
           notes: string | null
+          pulse_bpm: number | null
           updated_at: string
           user_id: string
           waist_cm: number | null
           weight_kg: number | null
         }
         Insert: {
+          blood_pressure_dia?: number | null
+          blood_pressure_sys?: number | null
           created_at?: string
           id?: never
           measured_date: string
           notes?: string | null
+          pulse_bpm?: number | null
           updated_at?: string
           user_id: string
           waist_cm?: number | null
           weight_kg?: number | null
         }
         Update: {
+          blood_pressure_dia?: number | null
+          blood_pressure_sys?: number | null
           created_at?: string
           id?: never
           measured_date?: string
           notes?: string | null
+          pulse_bpm?: number | null
           updated_at?: string
           user_id?: string
           waist_cm?: number | null

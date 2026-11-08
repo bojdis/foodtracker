@@ -236,6 +236,9 @@ export async function POST(request: Request) {
           measured_date: input.log_date,
           weight_kg: extractedMeasurement.weight_kg,
           waist_cm: extractedMeasurement.waist_cm,
+          blood_pressure_sys: extractedMeasurement.blood_pressure_sys,
+          blood_pressure_dia: extractedMeasurement.blood_pressure_dia,
+          pulse_bpm: extractedMeasurement.pulse_bpm,
         }
       );
       measurementSaved = syncResult.measurement;
@@ -281,7 +284,7 @@ export async function POST(request: Request) {
     let parsedResult;
     try {
       parsedResult = await parseEntryWithAgent({
-        rawText: textForLog || "Výživový štítek z fotky",
+        rawText: textForLog || "Fotka štítku nebo zařízení",
         imageBase64: input.image_base64,
         imageMimeType: input.image_mime_type,
         userWeightKg,
@@ -292,8 +295,45 @@ export async function POST(request: Request) {
       const msg =
         parseErr instanceof Error
           ? parseErr.message
-          : "Nepodařilo se analyzovat fotku štítku.";
+          : "Nepodařilo se analyzovat fotku.";
       return NextResponse.json({ error: msg }, { status: 422 });
+    }
+
+    if (parsedResult.detected_measurement) {
+      const dm = parsedResult.detected_measurement;
+      if (
+        (dm.blood_pressure_sys != null && dm.blood_pressure_dia != null) ||
+        dm.weight_kg != null
+      ) {
+        try {
+          const syncResult = await upsertBodyMeasurementAndSyncProfile(
+            supabase,
+            userId,
+            {
+              measured_date: input.log_date,
+              weight_kg: dm.weight_kg ?? undefined,
+              blood_pressure_sys: dm.blood_pressure_sys ?? undefined,
+              blood_pressure_dia: dm.blood_pressure_dia ?? undefined,
+              pulse_bpm: dm.pulse_bpm ?? undefined,
+            }
+          );
+          measurementSaved = syncResult.measurement;
+          updatedProfile = syncResult.updatedProfile;
+        } catch (err) {
+          console.warn("Chyba při automatickém uložení měření z fotky:", err);
+        }
+
+        if (parsedResult.items.length === 0) {
+          return NextResponse.json(
+            {
+              entry: null,
+              measurementSaved,
+              updatedProfile,
+            },
+            { status: 201 }
+          );
+        }
+      }
     }
 
     const foodItems = parsedResult.items.filter((i) => i.item_kind === "food");

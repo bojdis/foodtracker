@@ -8,10 +8,12 @@ import {
   type KeyboardEvent,
 } from "react";
 import {
+  Activity,
   Camera,
   Check,
   ChevronDown,
   ChevronUp,
+  Heart,
   Loader2,
   Plus,
   Ruler,
@@ -20,6 +22,7 @@ import {
   X,
 } from "lucide-react";
 import type { BodyMeasurementRow } from "@/lib/types";
+import { getBloodPressureCategory } from "@/lib/types";
 import { WaistMeasurementGuide } from "./WaistMeasurementGuide";
 import { compressImageFile, type CompressedImageResult } from "@/lib/image-utils";
 
@@ -41,6 +44,9 @@ interface HeroCaptureCardProps {
   onSaveMeasurement: (payload: {
     weight_kg: number | null;
     waist_cm: number | null;
+    blood_pressure_sys?: number | null;
+    blood_pressure_dia?: number | null;
+    pulse_bpm?: number | null;
   }) => Promise<boolean>;
 }
 
@@ -86,6 +92,19 @@ export function HeroCaptureCard({
 
   const [weightInput, setWeightInput] = useState<string>(defaultWeightStr);
   const [waistInput, setWaistInput] = useState<string>(defaultWaistStr);
+  const [bpSysInput, setBpSysInput] = useState<string>(
+    dayMeasurement?.blood_pressure_sys != null
+      ? String(dayMeasurement.blood_pressure_sys)
+      : ""
+  );
+  const [bpDiaInput, setBpDiaInput] = useState<string>(
+    dayMeasurement?.blood_pressure_dia != null
+      ? String(dayMeasurement.blood_pressure_dia)
+      : ""
+  );
+  const [pulseInput, setPulseInput] = useState<string>(
+    dayMeasurement?.pulse_bpm != null ? String(dayMeasurement.pulse_bpm) : ""
+  );
 
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
@@ -101,10 +120,26 @@ export function HeroCaptureCard({
     setWaistInput(
       dayMeasurement?.waist_cm != null ? String(dayMeasurement.waist_cm) : ""
     );
+    setBpSysInput(
+      dayMeasurement?.blood_pressure_sys != null
+        ? String(dayMeasurement.blood_pressure_sys)
+        : ""
+    );
+    setBpDiaInput(
+      dayMeasurement?.blood_pressure_dia != null
+        ? String(dayMeasurement.blood_pressure_dia)
+        : ""
+    );
+    setPulseInput(
+      dayMeasurement?.pulse_bpm != null ? String(dayMeasurement.pulse_bpm) : ""
+    );
   }, [
     dayMeasurement?.id,
     dayMeasurement?.weight_kg,
     dayMeasurement?.waist_cm,
+    dayMeasurement?.blood_pressure_sys,
+    dayMeasurement?.blood_pressure_dia,
+    dayMeasurement?.pulse_bpm,
     lastKnownWeightKg,
   ]);
 
@@ -204,6 +239,43 @@ export function HeroCaptureCard({
     setWaistInput(String(next));
   }
 
+  function stepSys(delta: number) {
+    const cur = parseInt(bpSysInput, 10);
+    const base = Number.isFinite(cur) && cur >= 60 ? cur : 120;
+    const next = Math.min(240, Math.max(70, base + delta));
+    setBpSysInput(String(next));
+  }
+
+  function stepDia(delta: number) {
+    const cur = parseInt(bpDiaInput, 10);
+    const base = Number.isFinite(cur) && cur >= 40 ? cur : 80;
+    const next = Math.min(150, Math.max(45, base + delta));
+    setBpDiaInput(String(next));
+  }
+
+  function stepPulse(delta: number) {
+    const cur = parseInt(pulseInput, 10);
+    const base = Number.isFinite(cur) && cur >= 35 ? cur : 70;
+    const next = Math.min(200, Math.max(40, base + delta));
+    setPulseInput(String(next));
+  }
+
+  const liveBpCategory = (() => {
+    const sys = parseInt(bpSysInput, 10);
+    const dia = parseInt(bpDiaInput, 10);
+    if (
+      Number.isFinite(sys) &&
+      sys >= 60 &&
+      sys <= 260 &&
+      Number.isFinite(dia) &&
+      dia >= 40 &&
+      dia <= 160
+    ) {
+      return getBloodPressureCategory(sys, dia);
+    }
+    return null;
+  })();
+
   async function handleMeasurementSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const parsedWeight = weightInput.trim()
@@ -212,6 +284,9 @@ export function HeroCaptureCard({
     const parsedWaist = waistInput.trim()
       ? Number.parseFloat(waistInput.replace(",", "."))
       : null;
+    const parsedSys = bpSysInput.trim() ? parseInt(bpSysInput, 10) : null;
+    const parsedDia = bpDiaInput.trim() ? parseInt(bpDiaInput, 10) : null;
+    const parsedPulse = pulseInput.trim() ? parseInt(pulseInput, 10) : null;
 
     const validWeight =
       parsedWeight !== null &&
@@ -229,13 +304,47 @@ export function HeroCaptureCard({
         ? round1(parsedWaist)
         : null;
 
-    if (validWeight === null && validWaist === null) {
+    const validSys =
+      parsedSys !== null &&
+      Number.isFinite(parsedSys) &&
+      parsedSys >= 60 &&
+      parsedSys <= 260
+        ? parsedSys
+        : null;
+
+    const validDia =
+      parsedDia !== null &&
+      Number.isFinite(parsedDia) &&
+      parsedDia >= 40 &&
+      parsedDia <= 160
+        ? parsedDia
+        : null;
+
+    const validPulse =
+      parsedPulse !== null &&
+      Number.isFinite(parsedPulse) &&
+      parsedPulse >= 35 &&
+      parsedPulse <= 220
+        ? parsedPulse
+        : null;
+
+    const hasBp = validSys !== null && validDia !== null;
+
+    if (
+      validWeight === null &&
+      validWaist === null &&
+      !hasBp &&
+      validPulse === null
+    ) {
       return;
     }
 
     const ok = await onSaveMeasurement({
       weight_kg: validWeight,
       waist_cm: validWaist,
+      blood_pressure_sys: hasBp ? validSys : null,
+      blood_pressure_dia: hasBp ? validDia : null,
+      pulse_bpm: validPulse,
     });
     if (ok) {
       setBodyDrawerOpen(false);
@@ -244,7 +353,9 @@ export function HeroCaptureCard({
 
   const hasTodayMeasurement =
     dayMeasurement !== null &&
-    (dayMeasurement.weight_kg !== null || dayMeasurement.waist_cm !== null);
+    (dayMeasurement.weight_kg !== null ||
+      dayMeasurement.waist_cm !== null ||
+      dayMeasurement.blood_pressure_sys !== null);
 
   return (
     <section className="relative rounded-3xl border border-slate-200/90 bg-white/95 p-3.5 shadow-md shadow-slate-900/5 backdrop-blur-xl sm:p-4 dark:border-slate-800/90 dark:bg-slate-900/90">
@@ -317,7 +428,7 @@ export function HeroCaptureCard({
             placeholder={
               selectedImage
                 ? "Volitelně doplň poznámku (např. „vypil jsem jen půlku“ nebo nech prázdné)…"
-                : "Napiš co jsi snědl nebo dělal — např. „2 vejce, chléb se šunkou“, nebo vyfoť štítek 📷…"
+                : "Napiš co jsi snědl nebo dělal — např. „2 vejce, chléb“, „tlak 125/82 tep 70“, nebo vyfoť štítek / tlakoměr 📷…"
             }
             className="w-full resize-none rounded-2xl border-2 border-slate-200/90 bg-slate-50/90 px-3.5 py-2.5 text-base font-medium leading-snug text-slate-900 placeholder:font-normal placeholder:text-slate-400 outline-none transition focus:border-emerald-500 focus:bg-white focus:ring-4 focus:ring-emerald-500/15 dark:border-slate-700/90 dark:bg-slate-950/80 dark:text-white dark:placeholder:text-slate-500 dark:focus:border-emerald-400 dark:focus:bg-slate-950"
           />
@@ -330,8 +441,8 @@ export function HeroCaptureCard({
               type="button"
               disabled={submitting || imageCompressing}
               onClick={() => fileInputRef.current?.click()}
-              title="Vyfotit výživový štítek nebo jídlo"
-              aria-label="Vyfotit výživový štítek nebo jídlo"
+              title="Vyfotit výživový štítek nebo displej tlakoměru/váhy"
+              aria-label="Vyfotit výživový štítek nebo displej tlakoměru/váhy"
               className={`inline-flex items-center gap-1.5 rounded-2xl border px-3 py-2 text-xs font-semibold transition active:scale-95 ${
                 selectedImage
                   ? "border-emerald-500 bg-emerald-500/15 text-emerald-800 dark:border-emerald-400 dark:text-emerald-200"
@@ -343,7 +454,7 @@ export function HeroCaptureCard({
               ) : (
                 <Camera className="h-3.5 w-3.5 text-emerald-500" />
               )}
-              <span>{selectedImage ? "Štítek vyfocen" : "Vyfotit štítek"}</span>
+              <span>{selectedImage ? "Fotka připojena" : "Vyfotit štítek / tlak"}</span>
             </button>
 
             <button
@@ -359,20 +470,41 @@ export function HeroCaptureCard({
             >
               <Scale className="h-3.5 w-3.5 text-emerald-500" />
               {hasTodayMeasurement ? (
-                <span>
-                  {dayMeasurement?.weight_kg != null
-                    ? `${formatNumCs(dayMeasurement.weight_kg)} kg`
-                    : ""}
+                <span className="inline-flex items-center gap-1.5">
+                  {dayMeasurement?.weight_kg != null && (
+                    <span>{formatNumCs(dayMeasurement.weight_kg)} kg</span>
+                  )}
                   {dayMeasurement?.weight_kg != null &&
-                  dayMeasurement?.waist_cm != null
-                    ? " · "
-                    : ""}
-                  {dayMeasurement?.waist_cm != null
-                    ? `${formatNumCs(dayMeasurement.waist_cm)} cm`
-                    : ""}
+                    dayMeasurement?.waist_cm != null && (
+                      <span className="opacity-50">·</span>
+                    )}
+                  {dayMeasurement?.waist_cm != null && (
+                    <span>{formatNumCs(dayMeasurement.waist_cm)} cm</span>
+                  )}
+                  {(dayMeasurement?.weight_kg != null ||
+                    dayMeasurement?.waist_cm != null) &&
+                    dayMeasurement?.blood_pressure_sys != null && (
+                      <span className="opacity-50">·</span>
+                    )}
+                  {dayMeasurement?.blood_pressure_sys != null &&
+                    dayMeasurement?.blood_pressure_dia != null && (
+                      <span className="inline-flex items-center gap-1 font-bold">
+                        <span
+                          className="h-1.5 w-1.5 rounded-full"
+                          style={{
+                            backgroundColor: getBloodPressureCategory(
+                              dayMeasurement.blood_pressure_sys,
+                              dayMeasurement.blood_pressure_dia
+                            ).dotColor,
+                          }}
+                        />
+                        {dayMeasurement.blood_pressure_sys}/
+                        {dayMeasurement.blood_pressure_dia}
+                      </span>
+                    )}
                 </span>
               ) : (
-                <span>Váha / pas</span>
+                <span>Míry a tlak</span>
               )}
               {bodyDrawerOpen ? (
                 <ChevronUp className="h-3.5 w-3.5 opacity-70" />
@@ -532,6 +664,98 @@ export function HeroCaptureCard({
                 </div>
               </div>
             </div>
+
+            {/* Blood Pressure & Pulse Card */}
+            <div className="rounded-2xl border border-slate-200/80 bg-white p-3 sm:col-span-2 dark:border-slate-800 dark:bg-slate-900">
+              <div className="flex flex-wrap items-center justify-between gap-1.5">
+                <label className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-700 dark:text-slate-200">
+                  <Heart className="h-3.5 w-3.5 text-rose-500" />
+                  Krevní tlak a tep
+                  <span className="font-normal text-slate-400">volitelné</span>
+                </label>
+                {liveBpCategory && (
+                  <span
+                    className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-bold ${liveBpCategory.badgeClass}`}
+                  >
+                    <span
+                      className="h-1.5 w-1.5 rounded-full"
+                      style={{ backgroundColor: liveBpCategory.dotColor }}
+                    />
+                    {liveBpCategory.label}
+                  </span>
+                )}
+              </div>
+
+              <div className="mt-2.5 grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+                <div>
+                  <span className="text-[11px] font-medium text-slate-500 dark:text-slate-400">
+                    Tlak SYS / DIA (mmHg)
+                  </span>
+                  <div className="mt-1 flex items-center gap-1.5">
+                    <input
+                      type="number"
+                      inputMode="numeric"
+                      placeholder="120"
+                      value={bpSysInput}
+                      onChange={(e) => setBpSysInput(e.target.value)}
+                      className="w-16 rounded-xl border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-center text-sm font-extrabold tabular-nums text-slate-900 outline-none focus:border-rose-500 focus:bg-white dark:border-slate-700 dark:bg-slate-950 dark:text-white"
+                    />
+                    <span className="text-base font-bold text-slate-400">/</span>
+                    <input
+                      type="number"
+                      inputMode="numeric"
+                      placeholder="80"
+                      value={bpDiaInput}
+                      onChange={(e) => setBpDiaInput(e.target.value)}
+                      className="w-16 rounded-xl border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-center text-sm font-extrabold tabular-nums text-slate-900 outline-none focus:border-rose-500 focus:bg-white dark:border-slate-700 dark:bg-slate-950 dark:text-white"
+                    />
+                    <div className="flex gap-1">
+                      {[-5, 5].map((d) => (
+                        <button
+                          key={d}
+                          type="button"
+                          onClick={() => {
+                            stepSys(d);
+                            stepDia(Math.sign(d) * (Math.abs(d) === 5 ? 3 : 5));
+                          }}
+                          className="rounded-xl border border-slate-200/80 bg-slate-100/80 px-2 py-1.5 text-xs font-bold tabular-nums text-slate-700 transition hover:border-rose-500/40 hover:bg-rose-500/10 active:scale-95 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
+                        >
+                          {d > 0 ? `+${d}` : d}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                <div>
+                  <span className="text-[11px] font-medium text-slate-500 dark:text-slate-400">
+                    Tepová frekvence (bpm)
+                  </span>
+                  <div className="mt-1 flex items-center gap-1.5">
+                    <input
+                      type="number"
+                      inputMode="numeric"
+                      placeholder="např. 70"
+                      value={pulseInput}
+                      onChange={(e) => setPulseInput(e.target.value)}
+                      className="w-20 rounded-xl border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-center text-sm font-extrabold tabular-nums text-slate-900 outline-none focus:border-rose-500 focus:bg-white dark:border-slate-700 dark:bg-slate-950 dark:text-white"
+                    />
+                    <div className="flex gap-1">
+                      {[-5, 5].map((d) => (
+                        <button
+                          key={d}
+                          type="button"
+                          onClick={() => stepPulse(d)}
+                          className="rounded-xl border border-slate-200/80 bg-slate-100/80 px-2 py-1.5 text-xs font-bold tabular-nums text-slate-700 transition hover:border-rose-500/40 hover:bg-rose-500/10 active:scale-95 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
+                        >
+                          {d > 0 ? `+${d}` : d}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
 
           <WaistMeasurementGuide />
@@ -544,7 +768,10 @@ export function HeroCaptureCard({
               type="submit"
               disabled={
                 savingMeasurement ||
-                (!weightInput.trim() && !waistInput.trim())
+                (!weightInput.trim() &&
+                  !waistInput.trim() &&
+                  (!bpSysInput.trim() || !bpDiaInput.trim()) &&
+                  !pulseInput.trim())
               }
               className="inline-flex shrink-0 items-center gap-1.5 rounded-xl bg-emerald-600 px-4 py-2 text-xs font-bold text-white shadow-sm transition hover:bg-emerald-700 active:scale-95 disabled:opacity-50"
             >

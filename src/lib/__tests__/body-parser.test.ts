@@ -4,6 +4,7 @@ import {
   tryParseBodyMeasurementText,
 } from "../body-parser";
 import {
+  computeBloodPressureStats,
   computeLoggedCalorieBalanceStats,
   computeWaistStats,
   computeWeightTrendSeries,
@@ -14,7 +15,10 @@ function makeMeasurement(
   id: number,
   measured_date: string,
   weight_kg: number | null,
-  waist_cm: number | null = null
+  waist_cm: number | null = null,
+  blood_pressure_sys: number | null = null,
+  blood_pressure_dia: number | null = null,
+  pulse_bpm: number | null = null
 ): BodyMeasurementRow {
   return {
     id,
@@ -22,6 +26,9 @@ function makeMeasurement(
     measured_date,
     weight_kg,
     waist_cm,
+    blood_pressure_sys,
+    blood_pressure_dia,
+    pulse_bpm,
     notes: null,
     created_at: `${measured_date}T07:00:00Z`,
     updated_at: `${measured_date}T07:00:00Z`,
@@ -58,11 +65,17 @@ describe("extractBodyMeasurementFromText & tryParseBodyMeasurementText", () => {
     expect(extractBodyMeasurementFromText("váha 99,4 kg, pas 96 cm")).toEqual({
       weight_kg: 99.4,
       waist_cm: 96,
+      blood_pressure_sys: null,
+      blood_pressure_dia: null,
+      pulse_bpm: null,
       remainingText: "",
     });
     expect(tryParseBodyMeasurementText("váha 99,4 kg, pas 96 cm")).toEqual({
       weight_kg: 99.4,
       waist_cm: 96,
+      blood_pressure_sys: null,
+      blood_pressure_dia: null,
+      pulse_bpm: null,
     });
   });
 
@@ -70,12 +83,58 @@ describe("extractBodyMeasurementFromText & tryParseBodyMeasurementText", () => {
     expect(extractBodyMeasurementFromText("dnes 98,8 kg")).toEqual({
       weight_kg: 98.8,
       waist_cm: null,
+      blood_pressure_sys: null,
+      blood_pressure_dia: null,
+      pulse_bpm: null,
       remainingText: "",
     });
     expect(extractBodyMeasurementFromText("obvod pasu 95,5 cm")).toEqual({
       weight_kg: null,
       waist_cm: 95.5,
+      blood_pressure_sys: null,
+      blood_pressure_dia: null,
+      pulse_bpm: null,
       remainingText: "",
+    });
+  });
+
+  it("parses blood pressure and pulse in various natural formats", () => {
+    expect(extractBodyMeasurementFromText("tlak 135/85")).toEqual({
+      weight_kg: null,
+      waist_cm: null,
+      blood_pressure_sys: 135,
+      blood_pressure_dia: 85,
+      pulse_bpm: null,
+      remainingText: "",
+    });
+
+    expect(extractBodyMeasurementFromText("tlak 125 na 82 tep 68")).toEqual({
+      weight_kg: null,
+      waist_cm: null,
+      blood_pressure_sys: 125,
+      blood_pressure_dia: 82,
+      pulse_bpm: 68,
+      remainingText: "",
+    });
+
+    expect(extractBodyMeasurementFromText("120/80")).toEqual({
+      weight_kg: null,
+      waist_cm: null,
+      blood_pressure_sys: 120,
+      blood_pressure_dia: 80,
+      pulse_bpm: null,
+      remainingText: "",
+    });
+
+    expect(
+      extractBodyMeasurementFromText("váha 98.5 kg, tlak 128/84 tep 72 a kafe s mlékem")
+    ).toEqual({
+      weight_kg: 98.5,
+      waist_cm: null,
+      blood_pressure_sys: 128,
+      blood_pressure_dia: 84,
+      pulse_bpm: 72,
+      remainingText: "kafe s mlékem",
     });
   });
 
@@ -85,6 +144,9 @@ describe("extractBodyMeasurementFromText & tryParseBodyMeasurementText", () => {
     ).toEqual({
       weight_kg: 99.2,
       waist_cm: null,
+      blood_pressure_sys: null,
+      blood_pressure_dia: null,
+      pulse_bpm: null,
       remainingText: "toast a kafe",
     });
     expect(
@@ -96,6 +158,9 @@ describe("extractBodyMeasurementFromText & tryParseBodyMeasurementText", () => {
     ).toEqual({
       weight_kg: 99.1,
       waist_cm: null,
+      blood_pressure_sys: null,
+      blood_pressure_dia: null,
+      pulse_bpm: null,
       remainingText: "40 min běh",
     });
   });
@@ -150,5 +215,22 @@ describe("progress-stats calculations", () => {
     expect(stats.loggedDaysCount).toBe(2);
     expect(stats.avgNetKcal).toBe(-450);
     expect(stats.daysOnTargetCount).toBe(2);
+  });
+
+  it("computes blood pressure moving average, ESC category and weight correlation insight", () => {
+    const rows = [
+      makeMeasurement(1, "2026-11-01", 100.0, null, 142, 92, 78),
+      makeMeasurement(2, "2026-11-04", 98.5, null, 134, 86, 74),
+      makeMeasurement(3, "2026-11-07", 97.0, null, 122, 80, 70),
+    ];
+
+    const stats = computeBloodPressureStats(rows);
+    expect(stats.latestSys).toBe(122);
+    expect(stats.latestDia).toBe(80);
+    expect(stats.latestPulse).toBe(70);
+    expect(stats.latestCategory?.category).toBe("normal");
+    expect(stats.deltaFromStartSys).toBe(-20);
+    expect(stats.deltaFromStartDia).toBe(-12);
+    expect(stats.weightCorrelationInsight).toContain("klesl systolický tlak o 20 mmHg");
   });
 });
