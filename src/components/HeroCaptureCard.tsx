@@ -45,8 +45,8 @@ interface HeroCaptureCardProps {
     imagePayload?: { base64: string; mimeType: string }
   ) => Promise<boolean>;
   onSaveMeasurement: (payload: {
-    weight_kg: number | null;
-    waist_cm: number | null;
+    weight_kg?: number | null;
+    waist_cm?: number | null;
     blood_pressure_sys?: number | null;
     blood_pressure_dia?: number | null;
     pulse_bpm?: number | null;
@@ -170,6 +170,9 @@ export function HeroCaptureCard({
   const [bpSysInput, setBpSysInput] = useState<string>(defaultBpSysStr);
   const [bpDiaInput, setBpDiaInput] = useState<string>(defaultBpDiaStr);
   const [pulseInput, setPulseInput] = useState<string>(defaultPulseStr);
+  const [savingSection, setSavingSection] = useState<
+    "weight" | "waist" | "bp" | null
+  >(null);
 
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
@@ -357,87 +360,80 @@ export function HeroCaptureCard({
     return null;
   })();
 
-  async function handleMeasurementSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const parsedWeight = weightInput.trim()
+  const parsedWeightVal = (() => {
+    const v = weightInput.trim()
       ? Number.parseFloat(weightInput.replace(",", "."))
-      : null;
-    const parsedWaist = waistInput.trim()
+      : NaN;
+    return Number.isFinite(v) && v >= 35 && v <= 260 ? round1(v) : null;
+  })();
+
+  const parsedWaistVal = (() => {
+    const v = waistInput.trim()
       ? Number.parseFloat(waistInput.replace(",", "."))
-      : null;
-    const parsedSys = bpSysInput.trim() ? parseInt(bpSysInput, 10) : null;
-    const parsedDia = bpDiaInput.trim() ? parseInt(bpDiaInput, 10) : null;
-    const parsedPulse = pulseInput.trim() ? parseInt(pulseInput, 10) : null;
+      : NaN;
+    return Number.isFinite(v) && v >= 45 && v <= 190 ? round1(v) : null;
+  })();
 
-    const validWeight =
-      parsedWeight !== null &&
-      Number.isFinite(parsedWeight) &&
-      parsedWeight >= 35 &&
-      parsedWeight <= 260
-        ? round1(parsedWeight)
-        : null;
+  const parsedSysVal = (() => {
+    const v = bpSysInput.trim() ? parseInt(bpSysInput, 10) : NaN;
+    return Number.isFinite(v) && v >= 60 && v <= 260 ? v : null;
+  })();
 
-    const validWaist =
-      parsedWaist !== null &&
-      Number.isFinite(parsedWaist) &&
-      parsedWaist >= 45 &&
-      parsedWaist <= 190
-        ? round1(parsedWaist)
-        : null;
+  const parsedDiaVal = (() => {
+    const v = bpDiaInput.trim() ? parseInt(bpDiaInput, 10) : NaN;
+    return Number.isFinite(v) && v >= 40 && v <= 160 ? v : null;
+  })();
 
-    const validSys =
-      parsedSys !== null &&
-      Number.isFinite(parsedSys) &&
-      parsedSys >= 60 &&
-      parsedSys <= 260
-        ? parsedSys
-        : null;
+  const parsedPulseVal = (() => {
+    const v = pulseInput.trim() ? parseInt(pulseInput, 10) : NaN;
+    return Number.isFinite(v) && v >= 35 && v <= 220 ? v : null;
+  })();
 
-    const validDia =
-      parsedDia !== null &&
-      Number.isFinite(parsedDia) &&
-      parsedDia >= 40 &&
-      parsedDia <= 160
-        ? parsedDia
-        : null;
+  const hasValidBp =
+    parsedSysVal !== null &&
+    parsedDiaVal !== null &&
+    parsedSysVal > parsedDiaVal;
 
-    const validPulse =
-      parsedPulse !== null &&
-      Number.isFinite(parsedPulse) &&
-      parsedPulse >= 35 &&
-      parsedPulse <= 220
-        ? parsedPulse
-        : null;
-
-    const hasBp = validSys !== null && validDia !== null;
-
-    if (
-      validWeight === null &&
-      validWaist === null &&
-      !hasBp &&
-      validPulse === null
-    ) {
-      return;
+  async function handleSaveWeightOnly() {
+    if (parsedWeightVal === null || savingMeasurement) return;
+    setSavingSection("weight");
+    try {
+      await onSaveMeasurement({ weight_kg: parsedWeightVal });
+    } finally {
+      setSavingSection(null);
     }
+  }
 
-    const ok = await onSaveMeasurement({
-      weight_kg: validWeight,
-      waist_cm: validWaist,
-      blood_pressure_sys: hasBp ? validSys : null,
-      blood_pressure_dia: hasBp ? validDia : null,
-      pulse_bpm: validPulse,
-    });
-    if (ok) {
-      if (hasBp) {
+  async function handleSaveWaistOnly() {
+    if (parsedWaistVal === null || savingMeasurement) return;
+    setSavingSection("waist");
+    try {
+      await onSaveMeasurement({ waist_cm: parsedWaistVal });
+    } finally {
+      setSavingSection(null);
+    }
+  }
+
+  async function handleSaveBpOnly() {
+    if ((!hasValidBp && parsedPulseVal === null) || savingMeasurement) return;
+    setSavingSection("bp");
+    try {
+      const ok = await onSaveMeasurement({
+        blood_pressure_sys: hasValidBp ? parsedSysVal : undefined,
+        blood_pressure_dia: hasValidBp ? parsedDiaVal : undefined,
+        pulse_bpm: parsedPulseVal ?? undefined,
+      });
+      if (ok && hasValidBp) {
         const nextStored: StoredBpValues = {
-          sys: validSys,
-          dia: validDia,
-          pulse: validPulse ?? effectiveLastPulseBpm ?? null,
+          sys: parsedSysVal,
+          dia: parsedDiaVal,
+          pulse: parsedPulseVal ?? effectiveLastPulseBpm ?? null,
         };
         setStoredBp(nextStored);
         writeStoredBp(nextStored);
       }
-      setBodyDrawerOpen(false);
+    } finally {
+      setSavingSection(null);
     }
   }
 
@@ -654,109 +650,178 @@ export function HeroCaptureCard({
         </div>
       )}
 
-      {/* Expandable Inline Weight & Waist Quick-Stepper Drawer */}
+      {/* Expandable Inline Weight, Waist & Blood Pressure Quick-Stepper Drawer */}
       {bodyDrawerOpen && (
-        <form
-          onSubmit={handleMeasurementSubmit}
-          className="mt-3.5 space-y-3 rounded-2xl border border-slate-200/90 bg-slate-50/90 p-3.5 dark:border-slate-800 dark:bg-slate-950/70"
-        >
+        <div className="mt-3.5 space-y-3 rounded-2xl border border-slate-200/90 bg-slate-50/90 p-3.5 dark:border-slate-800 dark:bg-slate-950/70">
+          <div className="flex flex-wrap items-center justify-between gap-2 px-0.5">
+            <span className="text-[11px] font-medium text-slate-500 dark:text-slate-400">
+              Každou hodnotu můžeš uložit samostatně přesně ve chvíli, kdy ji změříš:
+            </span>
+            <button
+              type="button"
+              onClick={() => setBodyDrawerOpen(false)}
+              className="text-[11px] font-bold text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
+            >
+              Zavřít panel
+            </button>
+          </div>
+
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             {/* Weight Stepper */}
-            <div className="rounded-2xl border border-slate-200/80 bg-white p-3 dark:border-slate-800 dark:bg-slate-900">
-              <div className="flex items-center justify-between">
-                <label
-                  htmlFor="hero-weight-input"
-                  className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-700 dark:text-slate-200"
-                >
-                  <Scale className="h-3.5 w-3.5 text-emerald-500" />
-                  Váha (kg)
-                </label>
-                {lastKnownWeightKg !== null && (
-                  <span className="text-[11px] text-slate-400">
-                    minule {formatNumCs(lastKnownWeightKg)} kg
-                  </span>
-                )}
+            <div className="flex flex-col justify-between rounded-2xl border border-slate-200/80 bg-white p-3 dark:border-slate-800 dark:bg-slate-900">
+              <div>
+                <div className="flex items-center justify-between gap-1.5">
+                  <label
+                    htmlFor="hero-weight-input"
+                    className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-700 dark:text-slate-200"
+                  >
+                    <Scale className="h-3.5 w-3.5 text-emerald-500" />
+                    Váha (kg)
+                  </label>
+                  {dayMeasurement?.weight_kg != null ? (
+                    <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-bold text-emerald-700 dark:text-emerald-300">
+                      ✓ Dnes: {formatNumCs(dayMeasurement.weight_kg)} kg
+                    </span>
+                  ) : (
+                    lastKnownWeightKg !== null && (
+                      <span className="text-[11px] text-slate-400">
+                        minule {formatNumCs(lastKnownWeightKg)} kg
+                      </span>
+                    )
+                  )}
+                </div>
+
+                <div className="mt-2 flex items-center gap-2">
+                  <input
+                    id="hero-weight-input"
+                    type="text"
+                    inputMode="decimal"
+                    placeholder={
+                      lastKnownWeightKg ? formatNumCs(lastKnownWeightKg) : "98,7"
+                    }
+                    value={weightInput}
+                    onChange={(e) => setWeightInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        void handleSaveWeightOnly();
+                      }
+                    }}
+                    className="w-24 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-center text-base font-extrabold tabular-nums text-slate-900 outline-none focus:border-emerald-500 focus:bg-white dark:border-slate-700 dark:bg-slate-950 dark:text-white"
+                  />
+                  <div className="grid flex-1 grid-cols-4 gap-1">
+                    {[-0.5, -0.1, 0.1, 0.5].map((delta) => (
+                      <button
+                        key={delta}
+                        type="button"
+                        onClick={() => stepWeight(delta)}
+                        className="rounded-xl border border-slate-200/80 bg-slate-100/80 py-2 text-xs font-bold tabular-nums text-slate-700 transition hover:border-emerald-500/40 hover:bg-emerald-500/10 active:scale-95 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
+                      >
+                        {delta > 0
+                          ? `+${String(delta).replace(".", ",")}`
+                          : String(delta).replace(".", ",")}
+                      </button>
+                    ))}
+                  </div>
+                </div>
               </div>
 
-              <div className="mt-2 flex items-center gap-2">
-                <input
-                  id="hero-weight-input"
-                  type="text"
-                  inputMode="decimal"
-                  placeholder={
-                    lastKnownWeightKg ? formatNumCs(lastKnownWeightKg) : "99,5"
-                  }
-                  value={weightInput}
-                  onChange={(e) => setWeightInput(e.target.value)}
-                  className="w-24 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-center text-base font-extrabold tabular-nums text-slate-900 outline-none focus:border-emerald-500 focus:bg-white dark:border-slate-700 dark:bg-slate-950 dark:text-white"
-                />
-                <div className="grid flex-1 grid-cols-4 gap-1">
-                  {[-0.5, -0.1, 0.1, 0.5].map((delta) => (
-                    <button
-                      key={delta}
-                      type="button"
-                      onClick={() => stepWeight(delta)}
-                      className="rounded-xl border border-slate-200/80 bg-slate-100/80 py-2 text-xs font-bold tabular-nums text-slate-700 transition hover:border-emerald-500/40 hover:bg-emerald-500/10 active:scale-95 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
-                    >
-                      {delta > 0
-                        ? `+${String(delta).replace(".", ",")}`
-                        : String(delta).replace(".", ",")}
-                    </button>
-                  ))}
-                </div>
+              <div className="mt-2.5 flex items-center justify-end border-t border-slate-100 pt-2 dark:border-slate-800/80">
+                <button
+                  type="button"
+                  disabled={savingMeasurement || parsedWeightVal === null}
+                  onClick={() => void handleSaveWeightOnly()}
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white shadow-xs transition hover:bg-emerald-700 active:scale-95 disabled:opacity-45"
+                >
+                  {savingSection === "weight" ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Check className="h-3.5 w-3.5 stroke-[2.5]" />
+                  )}
+                  <span>Uložit váhu</span>
+                </button>
               </div>
             </div>
 
-            {/* Waist Stepper (Optional so yesterday's waist isn't accidentally duplicated) */}
-            <div className="rounded-2xl border border-slate-200/80 bg-white p-3 dark:border-slate-800 dark:bg-slate-900">
-              <div className="flex items-center justify-between">
-                <label
-                  htmlFor="hero-waist-input"
-                  className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-700 dark:text-slate-200"
-                >
-                  <Ruler className="h-3.5 w-3.5 text-violet-500" />
-                  Obvod pasu (cm)
-                  <span className="font-normal text-slate-400">volitelné</span>
-                </label>
-                {lastKnownWaistCm !== null && !waistInput && (
-                  <button
-                    type="button"
-                    onClick={() => setWaistInput(String(lastKnownWaistCm))}
-                    className="text-[11px] font-semibold text-violet-600 hover:underline dark:text-violet-400"
+            {/* Waist Stepper */}
+            <div className="flex flex-col justify-between rounded-2xl border border-slate-200/80 bg-white p-3 dark:border-slate-800 dark:bg-slate-900">
+              <div>
+                <div className="flex items-center justify-between gap-1.5">
+                  <label
+                    htmlFor="hero-waist-input"
+                    className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-700 dark:text-slate-200"
                   >
-                    minule {formatNumCs(lastKnownWaistCm)} cm
-                  </button>
-                )}
+                    <Ruler className="h-3.5 w-3.5 text-violet-500" />
+                    Obvod pasu (cm)
+                  </label>
+                  {dayMeasurement?.waist_cm != null ? (
+                    <span className="rounded-full bg-violet-500/15 px-2 py-0.5 text-[10px] font-bold text-violet-700 dark:text-violet-300">
+                      ✓ Dnes: {formatNumCs(dayMeasurement.waist_cm)} cm
+                    </span>
+                  ) : (
+                    lastKnownWaistCm !== null && (
+                      <button
+                        type="button"
+                        onClick={() => setWaistInput(String(lastKnownWaistCm))}
+                        className="text-[11px] font-semibold text-violet-600 hover:underline dark:text-violet-400"
+                      >
+                        minule {formatNumCs(lastKnownWaistCm)} cm
+                      </button>
+                    )
+                  )}
+                </div>
+
+                <div className="mt-2 flex items-center gap-2">
+                  <input
+                    id="hero-waist-input"
+                    type="text"
+                    inputMode="decimal"
+                    placeholder={
+                      lastKnownWaistCm
+                        ? `např. ${formatNumCs(lastKnownWaistCm)}`
+                        : "např. 96"
+                    }
+                    value={waistInput}
+                    onChange={(e) => setWaistInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        void handleSaveWaistOnly();
+                      }
+                    }}
+                    className="w-24 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-center text-base font-extrabold tabular-nums text-slate-900 placeholder:text-xs placeholder:font-normal outline-none focus:border-violet-500 focus:bg-white dark:border-slate-700 dark:bg-slate-950 dark:text-white"
+                  />
+                  <div className="grid flex-1 grid-cols-4 gap-1">
+                    {[-1, -0.5, 0.5, 1].map((delta) => (
+                      <button
+                        key={delta}
+                        type="button"
+                        onClick={() => stepWaist(delta)}
+                        className="rounded-xl border border-slate-200/80 bg-slate-100/80 py-2 text-xs font-bold tabular-nums text-slate-700 transition hover:border-violet-500/40 hover:bg-violet-500/10 active:scale-95 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
+                      >
+                        {delta > 0
+                          ? `+${String(delta).replace(".", ",")}`
+                          : String(delta).replace(".", ",")}
+                      </button>
+                    ))}
+                  </div>
+                </div>
               </div>
 
-              <div className="mt-2 flex items-center gap-2">
-                <input
-                  id="hero-waist-input"
-                  type="text"
-                  inputMode="decimal"
-                  placeholder={
-                    lastKnownWaistCm
-                      ? `např. ${formatNumCs(lastKnownWaistCm)}`
-                      : "např. 96"
-                  }
-                  value={waistInput}
-                  onChange={(e) => setWaistInput(e.target.value)}
-                  className="w-24 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-center text-base font-extrabold tabular-nums text-slate-900 placeholder:text-xs placeholder:font-normal outline-none focus:border-violet-500 focus:bg-white dark:border-slate-700 dark:bg-slate-950 dark:text-white"
-                />
-                <div className="grid flex-1 grid-cols-4 gap-1">
-                  {[-1, -0.5, 0.5, 1].map((delta) => (
-                    <button
-                      key={delta}
-                      type="button"
-                      onClick={() => stepWaist(delta)}
-                      className="rounded-xl border border-slate-200/80 bg-slate-100/80 py-2 text-xs font-bold tabular-nums text-slate-700 transition hover:border-violet-500/40 hover:bg-violet-500/10 active:scale-95 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
-                    >
-                      {delta > 0
-                        ? `+${String(delta).replace(".", ",")}`
-                        : String(delta).replace(".", ",")}
-                    </button>
-                  ))}
-                </div>
+              <div className="mt-2.5 flex items-center justify-end border-t border-slate-100 pt-2 dark:border-slate-800/80">
+                <button
+                  type="button"
+                  disabled={savingMeasurement || parsedWaistVal === null}
+                  onClick={() => void handleSaveWaistOnly()}
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-violet-600 px-3 py-1.5 text-xs font-bold text-white shadow-xs transition hover:bg-violet-700 active:scale-95 disabled:opacity-45"
+                >
+                  {savingSection === "waist" ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Check className="h-3.5 w-3.5 stroke-[2.5]" />
+                  )}
+                  <span>Uložit pas</span>
+                </button>
               </div>
             </div>
 
@@ -766,10 +831,19 @@ export function HeroCaptureCard({
                 <label className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-700 dark:text-slate-200">
                   <Heart className="h-3.5 w-3.5 text-rose-500" />
                   Krevní tlak a tep
-                  <span className="font-normal text-slate-400">volitelné</span>
                 </label>
                 <div className="flex flex-wrap items-center gap-2">
-                  {effectiveLastBpSys !== null &&
+                  {dayMeasurement?.blood_pressure_sys != null &&
+                  dayMeasurement?.blood_pressure_dia != null ? (
+                    <span className="rounded-full bg-rose-500/15 px-2 py-0.5 text-[10px] font-bold text-rose-700 dark:text-rose-300">
+                      ✓ Dnes: {dayMeasurement.blood_pressure_sys}/
+                      {dayMeasurement.blood_pressure_dia} mmHg
+                      {dayMeasurement.pulse_bpm != null
+                        ? ` · ${dayMeasurement.pulse_bpm} bpm`
+                        : ""}
+                    </span>
+                  ) : (
+                    effectiveLastBpSys !== null &&
                     effectiveLastBpDia !== null && (
                       <span className="text-[11px] text-slate-400">
                         minule {effectiveLastBpSys}/{effectiveLastBpDia} mmHg
@@ -777,19 +851,7 @@ export function HeroCaptureCard({
                           ? ` · ${effectiveLastPulseBpm} bpm`
                           : ""}
                       </span>
-                    )}
-                  {(bpSysInput || bpDiaInput || pulseInput) && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setBpSysInput("");
-                        setBpDiaInput("");
-                        setPulseInput("");
-                      }}
-                      className="text-[11px] font-semibold text-slate-400 hover:text-rose-500"
-                    >
-                      Vyčistit
-                    </button>
+                    )
                   )}
                   {liveBpCategory && (
                     <span
@@ -821,6 +883,12 @@ export function HeroCaptureCard({
                       }
                       value={bpSysInput}
                       onChange={(e) => setBpSysInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          void handleSaveBpOnly();
+                        }
+                      }}
                       className="w-16 rounded-xl border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-center text-sm font-extrabold tabular-nums text-slate-900 outline-none focus:border-rose-500 focus:bg-white dark:border-slate-700 dark:bg-slate-950 dark:text-white"
                     />
                     <span className="text-base font-bold text-slate-400">/</span>
@@ -834,6 +902,12 @@ export function HeroCaptureCard({
                       }
                       value={bpDiaInput}
                       onChange={(e) => setBpDiaInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          void handleSaveBpOnly();
+                        }
+                      }}
                       className="w-16 rounded-xl border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-center text-sm font-extrabold tabular-nums text-slate-900 outline-none focus:border-rose-500 focus:bg-white dark:border-slate-700 dark:bg-slate-950 dark:text-white"
                     />
                     <div className="flex gap-1">
@@ -869,6 +943,12 @@ export function HeroCaptureCard({
                       }
                       value={pulseInput}
                       onChange={(e) => setPulseInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          void handleSaveBpOnly();
+                        }
+                      }}
                       className="w-20 rounded-xl border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-center text-sm font-extrabold tabular-nums text-slate-900 outline-none focus:border-rose-500 focus:bg-white dark:border-slate-700 dark:bg-slate-950 dark:text-white"
                     />
                     <div className="flex gap-1">
@@ -886,35 +966,29 @@ export function HeroCaptureCard({
                   </div>
                 </div>
               </div>
+
+              <div className="mt-2.5 flex items-center justify-end border-t border-slate-100 pt-2 dark:border-slate-800/80">
+                <button
+                  type="button"
+                  disabled={
+                    savingMeasurement || (!hasValidBp && parsedPulseVal === null)
+                  }
+                  onClick={() => void handleSaveBpOnly()}
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-rose-600 px-3 py-1.5 text-xs font-bold text-white shadow-xs transition hover:bg-rose-700 active:scale-95 disabled:opacity-45"
+                >
+                  {savingSection === "bp" ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Check className="h-3.5 w-3.5 stroke-[2.5]" />
+                  )}
+                  <span>Uložit tlak</span>
+                </button>
+              </div>
             </div>
           </div>
 
           <WaistMeasurementGuide />
-
-          <div className="flex items-center justify-between gap-2">
-            <span className="text-[11px] text-slate-500 dark:text-slate-400">
-              Při změně váhy se automaticky přepočítá tvé BMR i cíle maker.
-            </span>
-            <button
-              type="submit"
-              disabled={
-                savingMeasurement ||
-                (!weightInput.trim() &&
-                  !waistInput.trim() &&
-                  (!bpSysInput.trim() || !bpDiaInput.trim()) &&
-                  !pulseInput.trim())
-              }
-              className="inline-flex shrink-0 items-center gap-1.5 rounded-xl bg-emerald-600 px-4 py-2 text-xs font-bold text-white shadow-sm transition hover:bg-emerald-700 active:scale-95 disabled:opacity-50"
-            >
-              {savingMeasurement ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <Check className="h-3.5 w-3.5 stroke-[2.5]" />
-              )}
-              Uložit měření
-            </button>
-          </div>
-        </form>
+        </div>
       )}
     </section>
   );

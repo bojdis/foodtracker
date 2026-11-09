@@ -563,8 +563,8 @@ export function TrackerApp({
   }
 
   async function handleSaveQuickMeasurement(payload: {
-    weight_kg: number | null;
-    waist_cm: number | null;
+    weight_kg?: number | null;
+    waist_cm?: number | null;
     blood_pressure_sys?: number | null;
     blood_pressure_dia?: number | null;
     pulse_bpm?: number | null;
@@ -606,20 +606,29 @@ export function TrackerApp({
         applyUpdatedProfile(res.data.updatedProfile);
       }
 
-      const parts: string[] = [];
-      if (m.weight_kg !== null) {
-        parts.push(`${formatNumCs(m.weight_kg)} kg`);
+      const savedParts: string[] = [];
+      if (payload.weight_kg != null && m.weight_kg !== null) {
+        savedParts.push(`váha ${formatNumCs(m.weight_kg)} kg`);
       }
-      if (m.waist_cm !== null) {
-        parts.push(`pas ${formatNumCs(m.waist_cm)} cm`);
+      if (payload.waist_cm != null && m.waist_cm !== null) {
+        savedParts.push(`pas ${formatNumCs(m.waist_cm)} cm`);
       }
-      if (m.blood_pressure_sys !== null && m.blood_pressure_dia !== null) {
-        parts.push(`tlak ${m.blood_pressure_sys}/${m.blood_pressure_dia}`);
+      if (
+        payload.blood_pressure_sys != null &&
+        payload.blood_pressure_dia != null &&
+        m.blood_pressure_sys !== null &&
+        m.blood_pressure_dia !== null
+      ) {
+        savedParts.push(
+          `tlak ${m.blood_pressure_sys}/${m.blood_pressure_dia} mmHg`
+        );
       }
-      if (m.pulse_bpm !== null) {
-        parts.push(`tep ${m.pulse_bpm}`);
+      if (payload.pulse_bpm != null && m.pulse_bpm !== null) {
+        savedParts.push(`tep ${m.pulse_bpm} bpm`);
       }
-      showTemporaryFeedback(`Uloženo: ${parts.join(" · ")}`);
+      showTemporaryFeedback(
+        `Uloženo: ${savedParts.length > 0 ? savedParts.join(" · ") : "měření aktualizováno"}`
+      );
       setProgressRefreshSignal((n) => n + 1);
       void fetchDayData(selectedDate, { silent: true });
       return true;

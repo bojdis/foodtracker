@@ -329,71 +329,57 @@ export function BodyProgressView({
     return null;
   })();
 
-  async function handleSaveMeasurement(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  const existingForSelectedDay = useMemo(
+    () => measurements.find((m) => m.measured_date === measuredDate) ?? null,
+    [measurements, measuredDate]
+  );
+
+  const parsedWeightVal = (() => {
+    const v = weightInput.trim()
+      ? Number.parseFloat(weightInput.replace(",", "."))
+      : NaN;
+    return Number.isFinite(v) && v >= 35 && v <= 260 ? round1(v) : null;
+  })();
+
+  const parsedWaistVal = (() => {
+    const v = waistInput.trim()
+      ? Number.parseFloat(waistInput.replace(",", "."))
+      : NaN;
+    return Number.isFinite(v) && v >= 45 && v <= 190 ? round1(v) : null;
+  })();
+
+  const parsedSysVal = (() => {
+    const v = bpSysInput.trim() ? parseInt(bpSysInput, 10) : NaN;
+    return Number.isFinite(v) && v >= 60 && v <= 260 ? v : null;
+  })();
+
+  const parsedDiaVal = (() => {
+    const v = bpDiaInput.trim() ? parseInt(bpDiaInput, 10) : NaN;
+    return Number.isFinite(v) && v >= 40 && v <= 160 ? v : null;
+  })();
+
+  const parsedPulseVal = (() => {
+    const v = pulseInput.trim() ? parseInt(pulseInput, 10) : NaN;
+    return Number.isFinite(v) && v >= 35 && v <= 220 ? v : null;
+  })();
+
+  const hasValidBp =
+    parsedSysVal !== null &&
+    parsedDiaVal !== null &&
+    parsedSysVal > parsedDiaVal;
+
+  async function savePartialMeasurement(
+    payload: {
+      weight_kg?: number | null;
+      waist_cm?: number | null;
+      blood_pressure_sys?: number | null;
+      blood_pressure_dia?: number | null;
+      pulse_bpm?: number | null;
+    },
+    labelCs: string
+  ) {
     setError(null);
     setSavedNotice(null);
-
-    const parsedW = weightInput.trim()
-      ? Number.parseFloat(weightInput.replace(",", "."))
-      : null;
-    const parsedWaist = waistInput.trim()
-      ? Number.parseFloat(waistInput.replace(",", "."))
-      : null;
-    const parsedSys = bpSysInput.trim() ? parseInt(bpSysInput, 10) : null;
-    const parsedDia = bpDiaInput.trim() ? parseInt(bpDiaInput, 10) : null;
-    const parsedPulse = pulseInput.trim() ? parseInt(pulseInput, 10) : null;
-
-    const validWeight =
-      parsedW !== null && Number.isFinite(parsedW) && parsedW >= 35 && parsedW <= 260
-        ? round1(parsedW)
-        : null;
-    const validWaist =
-      parsedWaist !== null &&
-      Number.isFinite(parsedWaist) &&
-      parsedWaist >= 45 &&
-      parsedWaist <= 190
-        ? round1(parsedWaist)
-        : null;
-
-    const validSys =
-      parsedSys !== null &&
-      Number.isFinite(parsedSys) &&
-      parsedSys >= 60 &&
-      parsedSys <= 260
-        ? parsedSys
-        : null;
-
-    const validDia =
-      parsedDia !== null &&
-      Number.isFinite(parsedDia) &&
-      parsedDia >= 40 &&
-      parsedDia <= 160
-        ? parsedDia
-        : null;
-
-    const validPulse =
-      parsedPulse !== null &&
-      Number.isFinite(parsedPulse) &&
-      parsedPulse >= 35 &&
-      parsedPulse <= 220
-        ? parsedPulse
-        : null;
-
-    const hasBp = validSys !== null && validDia !== null;
-
-    if (
-      validWeight === null &&
-      validWaist === null &&
-      !hasBp &&
-      validPulse === null
-    ) {
-      setError(
-        "Zadej prosím platnou váhu (35–260 kg), obvod pasu (45–190 cm) nebo krevní tlak (např. 120/80)."
-      );
-      return;
-    }
-
     setSaving(true);
     try {
       const res = await safeFetchJson<{
@@ -405,11 +391,11 @@ export function BodyProgressView({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           measured_date: measuredDate,
-          weight_kg: validWeight,
-          waist_cm: validWaist,
-          blood_pressure_sys: hasBp ? validSys : undefined,
-          blood_pressure_dia: hasBp ? validDia : undefined,
-          pulse_bpm: validPulse ?? undefined,
+          weight_kg: payload.weight_kg ?? undefined,
+          waist_cm: payload.waist_cm ?? undefined,
+          blood_pressure_sys: payload.blood_pressure_sys ?? undefined,
+          blood_pressure_dia: payload.blood_pressure_dia ?? undefined,
+          pulse_bpm: payload.pulse_bpm ?? undefined,
           notes: notesInput.trim() || undefined,
         }),
       });
@@ -424,7 +410,12 @@ export function BodyProgressView({
       }
 
       const m = res.data.measurement;
-      if (m.blood_pressure_sys !== null && m.blood_pressure_dia !== null) {
+      if (
+        payload.blood_pressure_sys != null &&
+        payload.blood_pressure_dia != null &&
+        m.blood_pressure_sys !== null &&
+        m.blood_pressure_dia !== null
+      ) {
         const nextStored: StoredBpValues = {
           sys: m.blood_pressure_sys,
           dia: m.blood_pressure_dia,
@@ -433,21 +424,9 @@ export function BodyProgressView({
         setStoredBp(nextStored);
         writeStoredBp(nextStored);
       }
-      const parts: string[] = [];
-      if (m.weight_kg !== null) {
-        parts.push(`váha ${formatNumCs(m.weight_kg)} kg`);
-      }
-      if (m.waist_cm !== null) {
-        parts.push(`pas ${formatNumCs(m.waist_cm)} cm`);
-      }
-      if (m.blood_pressure_sys !== null && m.blood_pressure_dia !== null) {
-        parts.push(`tlak ${m.blood_pressure_sys}/${m.blood_pressure_dia}`);
-      }
-      if (m.pulse_bpm !== null) {
-        parts.push(`tep ${m.pulse_bpm} bpm`);
-      }
+
       setSavedNotice(
-        `Uloženo (${formatShortDateCs(m.measured_date)}): ${parts.join(" · ")}`
+        `Uloženo (${formatShortDateCs(m.measured_date)}): ${labelCs}`
       );
 
       await fetchProgressData(period, true);
@@ -455,6 +434,41 @@ export function BodyProgressView({
     } finally {
       setSaving(false);
     }
+  }
+
+  async function handleSaveWeightOnly() {
+    if (parsedWeightVal === null || saving) return;
+    await savePartialMeasurement(
+      { weight_kg: parsedWeightVal },
+      `váha ${formatNumCs(parsedWeightVal)} kg`
+    );
+  }
+
+  async function handleSaveWaistOnly() {
+    if (parsedWaistVal === null || saving) return;
+    await savePartialMeasurement(
+      { waist_cm: parsedWaistVal },
+      `pas ${formatNumCs(parsedWaistVal)} cm`
+    );
+  }
+
+  async function handleSaveBpOnly() {
+    if ((!hasValidBp && parsedPulseVal === null) || saving) return;
+    const parts: string[] = [];
+    if (hasValidBp) {
+      parts.push(`tlak ${parsedSysVal}/${parsedDiaVal} mmHg`);
+    }
+    if (parsedPulseVal !== null) {
+      parts.push(`tep ${parsedPulseVal} bpm`);
+    }
+    await savePartialMeasurement(
+      {
+        blood_pressure_sys: hasValidBp ? parsedSysVal : undefined,
+        blood_pressure_dia: hasValidBp ? parsedDiaVal : undefined,
+        pulse_bpm: parsedPulseVal ?? undefined,
+      },
+      parts.join(" · ")
+    );
   }
 
   async function handleDeleteMeasurement(id: number) {
@@ -525,99 +539,149 @@ export function BodyProgressView({
           />
         </div>
 
-        <form onSubmit={handleSaveMeasurement} className="mt-3.5 space-y-3">
+        <div className="mt-3.5 space-y-3">
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             {/* Weight */}
-            <div className="rounded-2xl border border-slate-200/80 bg-slate-50/70 p-3 dark:border-slate-800 dark:bg-slate-950/50">
-              <div className="flex items-center justify-between">
-                <label
-                  htmlFor="progress-weight"
-                  className="text-xs font-bold text-slate-700 dark:text-slate-200"
-                >
-                  Váha (kg)
-                </label>
-                {weightStats.latestWeightKg !== null && (
-                  <span className="text-[11px] text-slate-400">
-                    poslední: {formatNumCs(weightStats.latestWeightKg)} kg
-                  </span>
-                )}
-              </div>
-              <div className="mt-2 flex items-center gap-2">
-                <input
-                  id="progress-weight"
-                  type="text"
-                  inputMode="decimal"
-                  placeholder="99,4"
-                  value={weightInput}
-                  onChange={(e) => setWeightInput(e.target.value)}
-                  className="w-24 rounded-xl border border-slate-200 bg-white px-3 py-2 text-center text-base font-extrabold tabular-nums text-slate-900 outline-none focus:border-emerald-500 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
-                />
-                <div className="grid flex-1 grid-cols-4 gap-1">
-                  {[-0.5, -0.1, 0.1, 0.5].map((delta) => (
-                    <button
-                      key={delta}
-                      type="button"
-                      onClick={() => stepWeight(delta)}
-                      className="rounded-xl border border-slate-200 bg-white py-2 text-xs font-bold tabular-nums text-slate-700 transition hover:border-emerald-500/50 hover:bg-emerald-500/10 active:scale-95 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
-                    >
-                      {delta > 0
-                        ? `+${String(delta).replace(".", ",")}`
-                        : String(delta).replace(".", ",")}
-                    </button>
-                  ))}
+            <div className="flex flex-col justify-between rounded-2xl border border-slate-200/80 bg-slate-50/70 p-3 dark:border-slate-800 dark:bg-slate-950/50">
+              <div>
+                <div className="flex items-center justify-between gap-1.5">
+                  <label
+                    htmlFor="progress-weight"
+                    className="text-xs font-bold text-slate-700 dark:text-slate-200"
+                  >
+                    Váha (kg)
+                  </label>
+                  {existingForSelectedDay?.weight_kg != null ? (
+                    <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-bold text-emerald-700 dark:text-emerald-300">
+                      ✓ Zapsáno: {formatNumCs(existingForSelectedDay.weight_kg)} kg
+                    </span>
+                  ) : (
+                    weightStats.latestWeightKg !== null && (
+                      <span className="text-[11px] text-slate-400">
+                        poslední: {formatNumCs(weightStats.latestWeightKg)} kg
+                      </span>
+                    )
+                  )}
                 </div>
+                <div className="mt-2 flex items-center gap-2">
+                  <input
+                    id="progress-weight"
+                    type="text"
+                    inputMode="decimal"
+                    placeholder="98,7"
+                    value={weightInput}
+                    onChange={(e) => setWeightInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        void handleSaveWeightOnly();
+                      }
+                    }}
+                    className="w-24 rounded-xl border border-slate-200 bg-white px-3 py-2 text-center text-base font-extrabold tabular-nums text-slate-900 outline-none focus:border-emerald-500 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
+                  />
+                  <div className="grid flex-1 grid-cols-4 gap-1">
+                    {[-0.5, -0.1, 0.1, 0.5].map((delta) => (
+                      <button
+                        key={delta}
+                        type="button"
+                        onClick={() => stepWeight(delta)}
+                        className="rounded-xl border border-slate-200 bg-white py-2 text-xs font-bold tabular-nums text-slate-700 transition hover:border-emerald-500/50 hover:bg-emerald-500/10 active:scale-95 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
+                      >
+                        {delta > 0
+                          ? `+${String(delta).replace(".", ",")}`
+                          : String(delta).replace(".", ",")}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+              <div className="mt-2.5 flex items-center justify-end border-t border-slate-200/60 pt-2 dark:border-slate-800/80">
+                <button
+                  type="button"
+                  disabled={saving || parsedWeightVal === null}
+                  onClick={() => void handleSaveWeightOnly()}
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white shadow-xs transition hover:bg-emerald-700 active:scale-95 disabled:opacity-45"
+                >
+                  <Check className="h-3.5 w-3.5 stroke-[2.5]" />
+                  <span>Uložit váhu</span>
+                </button>
               </div>
             </div>
 
             {/* Waist */}
-            <div className="rounded-2xl border border-slate-200/80 bg-slate-50/70 p-3 dark:border-slate-800 dark:bg-slate-950/50">
-              <div className="flex items-center justify-between">
-                <label
-                  htmlFor="progress-waist"
-                  className="text-xs font-bold text-slate-700 dark:text-slate-200"
-                >
-                  Obvod pasu v úrovni pupíku (cm)
-                </label>
-                {waistStats.latestWaistCm !== null && !waistInput && (
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setWaistInput(String(waistStats.latestWaistCm))
-                    }
-                    className="text-[11px] font-semibold text-violet-600 hover:underline dark:text-violet-400"
+            <div className="flex flex-col justify-between rounded-2xl border border-slate-200/80 bg-slate-50/70 p-3 dark:border-slate-800 dark:bg-slate-950/50">
+              <div>
+                <div className="flex items-center justify-between gap-1.5">
+                  <label
+                    htmlFor="progress-waist"
+                    className="text-xs font-bold text-slate-700 dark:text-slate-200"
                   >
-                    minule {formatNumCs(waistStats.latestWaistCm)} cm
-                  </button>
-                )}
-              </div>
-              <div className="mt-2 flex items-center gap-2">
-                <input
-                  id="progress-waist"
-                  type="text"
-                  inputMode="decimal"
-                  placeholder={
-                    waistStats.latestWaistCm
-                      ? `např. ${formatNumCs(waistStats.latestWaistCm)}`
-                      : "např. 96"
-                  }
-                  value={waistInput}
-                  onChange={(e) => setWaistInput(e.target.value)}
-                  className="w-24 rounded-xl border border-slate-200 bg-white px-3 py-2 text-center text-base font-extrabold tabular-nums text-slate-900 placeholder:text-xs placeholder:font-normal outline-none focus:border-violet-500 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
-                />
-                <div className="grid flex-1 grid-cols-4 gap-1">
-                  {[-1, -0.5, 0.5, 1].map((delta) => (
-                    <button
-                      key={delta}
-                      type="button"
-                      onClick={() => stepWaist(delta)}
-                      className="rounded-xl border border-slate-200 bg-white py-2 text-xs font-bold tabular-nums text-slate-700 transition hover:border-violet-500/50 hover:bg-violet-500/10 active:scale-95 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
-                    >
-                      {delta > 0
-                        ? `+${String(delta).replace(".", ",")}`
-                        : String(delta).replace(".", ",")}
-                    </button>
-                  ))}
+                    Obvod pasu v úrovni pupíku (cm)
+                  </label>
+                  {existingForSelectedDay?.waist_cm != null ? (
+                    <span className="rounded-full bg-violet-500/15 px-2 py-0.5 text-[10px] font-bold text-violet-700 dark:text-violet-300">
+                      ✓ Zapsáno: {formatNumCs(existingForSelectedDay.waist_cm)} cm
+                    </span>
+                  ) : (
+                    waistStats.latestWaistCm !== null && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setWaistInput(String(waistStats.latestWaistCm))
+                        }
+                        className="text-[11px] font-semibold text-violet-600 hover:underline dark:text-violet-400"
+                      >
+                        minule {formatNumCs(waistStats.latestWaistCm)} cm
+                      </button>
+                    )
+                  )}
                 </div>
+                <div className="mt-2 flex items-center gap-2">
+                  <input
+                    id="progress-waist"
+                    type="text"
+                    inputMode="decimal"
+                    placeholder={
+                      waistStats.latestWaistCm
+                        ? `např. ${formatNumCs(waistStats.latestWaistCm)}`
+                        : "např. 96"
+                    }
+                    value={waistInput}
+                    onChange={(e) => setWaistInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        void handleSaveWaistOnly();
+                      }
+                    }}
+                    className="w-24 rounded-xl border border-slate-200 bg-white px-3 py-2 text-center text-base font-extrabold tabular-nums text-slate-900 placeholder:text-xs placeholder:font-normal outline-none focus:border-violet-500 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
+                  />
+                  <div className="grid flex-1 grid-cols-4 gap-1">
+                    {[-1, -0.5, 0.5, 1].map((delta) => (
+                      <button
+                        key={delta}
+                        type="button"
+                        onClick={() => stepWaist(delta)}
+                        className="rounded-xl border border-slate-200 bg-white py-2 text-xs font-bold tabular-nums text-slate-700 transition hover:border-violet-500/50 hover:bg-violet-500/10 active:scale-95 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
+                      >
+                        {delta > 0
+                          ? `+${String(delta).replace(".", ",")}`
+                          : String(delta).replace(".", ",")}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+              <div className="mt-2.5 flex items-center justify-end border-t border-slate-200/60 pt-2 dark:border-slate-800/80">
+                <button
+                  type="button"
+                  disabled={saving || parsedWaistVal === null}
+                  onClick={() => void handleSaveWaistOnly()}
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-violet-600 px-3 py-1.5 text-xs font-bold text-white shadow-xs transition hover:bg-violet-700 active:scale-95 disabled:opacity-45"
+                >
+                  <Check className="h-3.5 w-3.5 stroke-[2.5]" />
+                  <span>Uložit pas</span>
+                </button>
               </div>
             </div>
 
@@ -627,10 +691,19 @@ export function BodyProgressView({
                 <label className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-700 dark:text-slate-200">
                   <Heart className="h-3.5 w-3.5 text-rose-500" />
                   Krevní tlak a tepová frekvence
-                  <span className="font-normal text-slate-400">volitelné</span>
                 </label>
                 <div className="flex flex-wrap items-center gap-2">
-                  {effectiveLastBpSys !== null &&
+                  {existingForSelectedDay?.blood_pressure_sys != null &&
+                  existingForSelectedDay?.blood_pressure_dia != null ? (
+                    <span className="rounded-full bg-rose-500/15 px-2 py-0.5 text-[10px] font-bold text-rose-700 dark:text-rose-300">
+                      ✓ Zapsáno: {existingForSelectedDay.blood_pressure_sys}/
+                      {existingForSelectedDay.blood_pressure_dia} mmHg
+                      {existingForSelectedDay.pulse_bpm != null
+                        ? ` · ${existingForSelectedDay.pulse_bpm} bpm`
+                        : ""}
+                    </span>
+                  ) : (
+                    effectiveLastBpSys !== null &&
                     effectiveLastBpDia !== null && (
                       <span className="text-[11px] text-slate-400">
                         poslední: {effectiveLastBpSys}/{effectiveLastBpDia} mmHg
@@ -638,19 +711,7 @@ export function BodyProgressView({
                           ? ` · ${effectiveLastPulseBpm} bpm`
                           : ""}
                       </span>
-                    )}
-                  {(bpSysInput || bpDiaInput || pulseInput) && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setBpSysInput("");
-                        setBpDiaInput("");
-                        setPulseInput("");
-                      }}
-                      className="text-[11px] font-semibold text-slate-400 hover:text-rose-500"
-                    >
-                      Vyčistit
-                    </button>
+                    )
                   )}
                   {liveBpCategory && (
                     <span
@@ -682,6 +743,12 @@ export function BodyProgressView({
                       }
                       value={bpSysInput}
                       onChange={(e) => setBpSysInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          void handleSaveBpOnly();
+                        }
+                      }}
                       className="w-16 rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-center text-sm font-extrabold tabular-nums text-slate-900 outline-none focus:border-rose-500 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
                     />
                     <span className="text-base font-bold text-slate-400">/</span>
@@ -695,6 +762,12 @@ export function BodyProgressView({
                       }
                       value={bpDiaInput}
                       onChange={(e) => setBpDiaInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          void handleSaveBpOnly();
+                        }
+                      }}
                       className="w-16 rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-center text-sm font-extrabold tabular-nums text-slate-900 outline-none focus:border-rose-500 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
                     />
                     <div className="flex gap-1">
@@ -730,6 +803,12 @@ export function BodyProgressView({
                       }
                       value={pulseInput}
                       onChange={(e) => setPulseInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          void handleSaveBpOnly();
+                        }
+                      }}
                       className="w-20 rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-center text-sm font-extrabold tabular-nums text-slate-900 outline-none focus:border-rose-500 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
                     />
                     <div className="flex gap-1">
@@ -747,6 +826,18 @@ export function BodyProgressView({
                   </div>
                 </div>
               </div>
+
+              <div className="mt-2.5 flex items-center justify-end border-t border-slate-200/60 pt-2 dark:border-slate-800/80">
+                <button
+                  type="button"
+                  disabled={saving || (!hasValidBp && parsedPulseVal === null)}
+                  onClick={() => void handleSaveBpOnly()}
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-rose-600 px-3 py-1.5 text-xs font-bold text-white shadow-xs transition hover:bg-rose-700 active:scale-95 disabled:opacity-45"
+                >
+                  <Check className="h-3.5 w-3.5 stroke-[2.5]" />
+                  <span>Uložit tlak</span>
+                </button>
+              </div>
             </div>
           </div>
 
@@ -756,31 +847,13 @@ export function BodyProgressView({
             <input
               type="text"
               maxLength={140}
-              placeholder="Volitelná poznámka (např. ráno nalačno, po tréninku…)"
+              placeholder="Volitelná poznámka k dnešnímu měření (např. ráno nalačno, po tréninku…)"
               value={notesInput}
               onChange={(e) => setNotesInput(e.target.value)}
               className="min-w-[200px] flex-1 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-800 placeholder:text-slate-400 outline-none focus:border-emerald-500 focus:bg-white dark:border-slate-800 dark:bg-slate-950 dark:text-slate-200"
             />
-            <button
-              type="submit"
-              disabled={
-                saving ||
-                (!weightInput.trim() &&
-                  !waistInput.trim() &&
-                  (!bpSysInput.trim() || !bpDiaInput.trim()) &&
-                  !pulseInput.trim())
-              }
-              className="inline-flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 px-4 py-2.5 text-xs font-bold text-white shadow-md shadow-emerald-500/20 transition hover:from-emerald-600 hover:to-teal-700 active:scale-95 disabled:opacity-50"
-            >
-              {saving ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Plus className="h-4 w-4 stroke-[2.5]" />
-              )}
-              Uložit měření
-            </button>
           </div>
-        </form>
+        </div>
 
         {savedNotice && (
           <div className="mt-3 flex items-center gap-2 rounded-2xl border border-emerald-500/30 bg-emerald-500/10 px-3.5 py-2 text-xs font-semibold text-emerald-800 dark:text-emerald-200">

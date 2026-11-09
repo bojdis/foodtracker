@@ -12,23 +12,38 @@ function round1(val: number): number {
   return Math.round(val * 10) / 10;
 }
 
-const STANDALONE_WEIGHT_RE =
-  /^(?:(?:dnes(?:ka)?|ráno|rano|večer|vecer)\s+)?(\d{2,3}(?:[.,]\d+)?)\s*kg\.?$/iu;
+const FILLER_WORDS =
+  "(?:(?:dnes(?:ka)?|ráno|rano|večer|vecer|odpoledne|poledne|nalačno|nalacno|aktuálně|aktualne|teď|ted|je|byl[ao]?|mám|mam|naměřeno|namereno)\\s+)*";
 
-const STANDALONE_BP_RE =
-  /^(?:(?:dnes(?:ka)?|ráno|rano|večer|vecer)\s+)?(?:(?:krevní|krevni)\s+)?(?:tlak\s*[:=]?\s*)?(\d{2,3})\s*(?:\/|\s+na\s+)\s*(\d{2,3})(?:\s*(?:mm\s*hg|tlak))?$/iu;
+const STANDALONE_WEIGHT_RE = new RegExp(
+  `^${FILLER_WORDS}(\\d{2,3}(?:[.,]\\d+)?)\\s*kg\\.?$`,
+  "iu"
+);
 
-const EXPLICIT_WEIGHT_CLAUSE_RE =
-  /(?:(?:^|[,;.\n])\s*(?:(?:dnes(?:ka)?|ráno|rano|večer|vecer)\s+)?|(?<![\p{L}\p{N}])(?:a\s+)?(?:(?:dnes(?:ka)?|ráno|rano|večer|vecer)\s+)?)(?:(?:tělesná|telesna|moje|ranní|ranni)\s+)?(?:váha|vaha|hmotnost|vážím|vazim)(?![\p{L}\p{N}])\s*(?:(?:je|dnes|ráno|rano)\s+)?[:=]?\s*(\d{2,3}(?:[.,]\d+)?)(?![\d.,])\s*(?:kg(?![\p{L}\p{N}]))?(?!\s*(?:g|mg|dg|ml|dl|l|ks|kcal|kj|min|h|mm|m|%)(?![\p{L}\p{N}]))/giu;
+const STANDALONE_BP_RE = new RegExp(
+  `^${FILLER_WORDS}(?:(?:krevní|krevni)\\s+)?(?:tlak\\s*${FILLER_WORDS}[:=]?\\s*)?(\\d{2,3})\\s*(?:\\/|\\s+na\\s+)\\s*(\\d{2,3})(?:\\s*(?:mm\\s*hg|tlak))?$`,
+  "iu"
+);
 
-const EXPLICIT_WAIST_CLAUSE_RE =
-  /(?:(?:^|[,;.\n])\s*(?:(?:dnes(?:ka)?|ráno|rano|večer|vecer)\s+)?|(?<![\p{L}\p{N}])(?:a\s+)?(?:(?:dnes(?:ka)?|ráno|rano|večer|vecer)\s+)?)(?:obvod\s+pasu|pas|v\s+pase)(?![\p{L}\p{N}])\s*(?:(?:je|dnes|ráno|rano)\s+)?[:=]?\s*(\d{2,3}(?:[.,]\d+)?)(?![\d.,])\s*(?:cm(?![\p{L}\p{N}]))?(?!\s*(?:g|mg|dg|ml|dl|l|ks|kcal|kj|min|h|kg|mm|m|%)(?![\p{L}\p{N}]))/giu;
+const EXPLICIT_WEIGHT_CLAUSE_RE = new RegExp(
+  `(?:(?:^|[,;.\\n])\\s*${FILLER_WORDS}|(?<![\\p{L}\\p{N}])(?:a\\s+)?${FILLER_WORDS})(?:(?:tělesná|telesna|moje|ranní|ranni|večerní|vecerni|dnešní|dnesni)\\s+)*(?:váha|vaha|hmotnost|vážím|vazim)(?![\\p{L}\\p{N}])\\s*${FILLER_WORDS}[:=]?\\s*(\\d{2,3}(?:[.,]\\d+)?)(?![\\d.,])\\s*(?:kg(?![\\p{L}\\p{N}]))?(?!\\s*(?:g|mg|dg|ml|dl|l|ks|kcal|kj|min|h|mm|m|%)(?![\\p{L}\\p{N}]))`,
+  "giu"
+);
 
-const EXPLICIT_BP_CLAUSE_RE =
-  /(?:(?:^|[,;.\n])\s*(?:(?:dnes(?:ka)?|ráno|rano|večer|vecer)\s+)?|(?<![\p{L}\p{N}])(?:a\s+)?(?:(?:dnes(?:ka)?|ráno|rano|večer|vecer)\s+)?)(?:(?:krevní|krevni)\s+)?(?:tlak)\s*[:=]?\s*(\d{2,3})\s*(?:\/|\s+na\s+)\s*(\d{2,3})(?:\s*mm\s*hg)?(?!\s*(?:g|mg|dg|ml|dl|l|ks|kcal|kj|min|h)(?![\p{L}\p{N}]))/giu;
+const EXPLICIT_WAIST_CLAUSE_RE = new RegExp(
+  `(?:(?:^|[,;.\\n])\\s*${FILLER_WORDS}|(?<![\\p{L}\\p{N}])(?:a\\s+)?${FILLER_WORDS})(?:obvod\\s+pasu|pas|v\\s+pase)(?![\\p{L}\\p{N}])\\s*${FILLER_WORDS}[:=]?\\s*(\\d{2,3}(?:[.,]\\d+)?)(?![\\d.,])\\s*(?:cm(?![\\p{L}\\p{N}]))?(?!\\s*(?:g|mg|dg|ml|dl|l|ks|kcal|kj|min|h|kg|mm|m|%)(?![\\p{L}\\p{N}]))`,
+  "giu"
+);
 
-const EXPLICIT_PULSE_CLAUSE_RE =
-  /(?:(?:^|[,;.\n])\s*(?:(?:dnes(?:ka)?|ráno|rano|večer|vecer)\s+)?|(?<![\p{L}\p{N}])(?:a\s+)?)(?:tep(?:ová\s+frekvence)?|pulz|puls|tepu)\s*[:=]?\s*(\d{2,3})(?:\s*(?:bpm|tepů|úderů))?(?!\s*(?:g|mg|dg|ml|dl|l|ks|kcal|kj|min|h)(?![\p{L}\p{N}]))/giu;
+const EXPLICIT_BP_CLAUSE_RE = new RegExp(
+  `(?:(?:^|[,;.\\n])\\s*${FILLER_WORDS}|(?<![\\p{L}\\p{N}])(?:a\\s+)?${FILLER_WORDS})(?:(?:krevní|krevni)\\s+)?(?:tlak)(?![\\p{L}\\p{N}])\\s*${FILLER_WORDS}[:=]?\\s*(\\d{2,3})\\s*(?:\\/|\\s+na\\s+)\\s*(\\d{2,3})(?:\\s*mm\\s*hg)?(?!\\s*(?:g|mg|dg|ml|dl|l|ks|kcal|kj|min|h)(?![\\p{L}\\p{N}]))`,
+  "giu"
+);
+
+const EXPLICIT_PULSE_CLAUSE_RE = new RegExp(
+  `(?:(?:^|[,;.\\n])\\s*${FILLER_WORDS}|(?<![\\p{L}\\p{N}])(?:a\\s+)?${FILLER_WORDS})(?:tep(?:ová\\s+frekvence)?|pulz|puls|tepu)(?![\\p{L}\\p{N}])\\s*${FILLER_WORDS}[:=]?\\s*(\\d{2,3})(?:\\s*(?:bpm|tepů|úderů))?(?!\\s*(?:g|mg|dg|ml|dl|l|ks|kcal|kj|min|h)(?![\\p{L}\\p{N}]))`,
+  "giu"
+);
 
 function cleanRemainingFoodOrActivityText(text: string): string {
   let cleaned = text
@@ -41,7 +56,11 @@ function cleanRemainingFoodOrActivityText(text: string): string {
     .replace(/[\s,;.+–-]+$/u, "")
     .trim();
 
-  if (/^(?:dnes(?:ka)?|ráno|rano|večer|vecer)$/iu.test(cleaned)) {
+  if (
+    /^(?:(?:dnes(?:ka)?|ráno|rano|večer|vecer|odpoledne|poledne|nalačno|nalacno|aktuálně|aktualne|teď|ted)\s*)+$/iu.test(
+      cleaned
+    )
+  ) {
     cleaned = "";
   }
 

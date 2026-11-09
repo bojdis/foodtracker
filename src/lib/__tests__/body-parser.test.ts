@@ -79,7 +79,30 @@ describe("extractBodyMeasurementFromText & tryParseBodyMeasurementText", () => {
     });
   });
 
-  it("parses standalone kg weight and waist-only inputs", () => {
+  it("parses standalone kg weight and waist-only inputs including multi-word time fillers", () => {
+    expect(extractBodyMeasurementFromText("váha dnes ráno 98,7 kg")).toEqual({
+      weight_kg: 98.7,
+      waist_cm: null,
+      blood_pressure_sys: null,
+      blood_pressure_dia: null,
+      pulse_bpm: null,
+      remainingText: "",
+    });
+    expect(tryParseBodyMeasurementText("váha dnes ráno 98,7 kg")).toEqual({
+      weight_kg: 98.7,
+      waist_cm: null,
+      blood_pressure_sys: null,
+      blood_pressure_dia: null,
+      pulse_bpm: null,
+    });
+    expect(extractBodyMeasurementFromText("dnes ráno nalačno váha je 98,7 kg")).toEqual({
+      weight_kg: 98.7,
+      waist_cm: null,
+      blood_pressure_sys: null,
+      blood_pressure_dia: null,
+      pulse_bpm: null,
+      remainingText: "",
+    });
     expect(extractBodyMeasurementFromText("dnes 98,8 kg")).toEqual({
       weight_kg: 98.8,
       waist_cm: null,

@@ -1,4 +1,5 @@
 import { createBackgroundClient } from "@/lib/supabase/background";
+import { upsertBodyMeasurementAndSyncProfile } from "@/lib/measurements-service";
 import type { EntryType, TimeSlot } from "@/lib/types";
 import {
   detectAndPromoteRecurringActivity,
@@ -86,6 +87,43 @@ export async function processLogEntryInBackground(params: {
       userBmrKcal,
       fallbackTimeSlot,
     });
+
+    let measurementSaved = false;
+    if (parsed.detected_measurement) {
+      const dm = parsed.detected_measurement;
+      if (
+        (dm.blood_pressure_sys != null && dm.blood_pressure_dia != null) ||
+        dm.weight_kg != null
+      ) {
+        await upsertBodyMeasurementAndSyncProfile(supabase, entry.user_id, {
+          measured_date: entry.log_date,
+          weight_kg: dm.weight_kg ?? undefined,
+          blood_pressure_sys: dm.blood_pressure_sys ?? undefined,
+          blood_pressure_dia: dm.blood_pressure_dia ?? undefined,
+          pulse_bpm: dm.pulse_bpm ?? undefined,
+        });
+        measurementSaved = true;
+      }
+    }
+
+    if (parsed.items.length === 0) {
+      if (measurementSaved) {
+        await supabase
+          .from("log_entries")
+          .delete()
+          .eq("id", entryId)
+          .eq("user_id", entry.user_id);
+
+        await supabase.rpc("recalculate_daily_summary", {
+          p_log_date: entry.log_date,
+        });
+        return;
+      }
+
+      throw new Error(
+        "V záznamu se nepodařilo rozpoznat žádné jídlo, aktivitu ani měření."
+      );
+    }
 
     // Clear any stale entry_items on retry before inserting freshly parsed items
     const { error: deleteItemsError } = await supabase
