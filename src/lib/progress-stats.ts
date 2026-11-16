@@ -42,21 +42,40 @@ export interface WaistStatsSummary {
   whtrLabelCs: string | null;
 }
 
+export const KCAL_PER_KG_FAT = 7700;
+
 export interface CalorieBalanceDayPoint {
   date: string;
   intakeKcal: number;
   burnedTotalKcal: number;
   netKcal: number;
   onTarget: boolean;
+  cumulativeNetKcal: number;
+  cumulativeFatKg: number;
 }
 
 export interface CalorieBalanceStatsSummary {
   points: CalorieBalanceDayPoint[];
   loggedDaysCount: number;
+  excludedIncompleteDaysCount: number;
+  todayExcludedAsIncomplete: boolean;
+  totalNetKcal: number;
+  totalIntakeKcal: number;
+  totalBurnedKcal: number;
+  /** Cumulative fat change equivalent in kg (negative = burned fat, 1 kg ≈ 7 700 kcal / 32 200 kJ) */
+  burnedFatKg: number;
+  /** Cumulative fat change equivalent in grams (negative = burned fat in g) */
+  burnedFatGrams: number;
   avgNetKcal: number | null;
   avgIntakeKcal: number | null;
   avgBurnedKcal: number | null;
   daysOnTargetCount: number;
+}
+
+export interface FatVsWeightInsight {
+  title: string;
+  body: string;
+  tone: "emerald" | "sky" | "teal";
 }
 
 export interface BloodPressureTrendPoint {
@@ -260,22 +279,34 @@ export function computeWaistStats(
 }
 
 /**
- * Computes daily caloric balance strictly across days with actual logged entries (entries_count > 0
- * and non-zero intake) so unlogged days never distort the user's average deficit.
+ * Computes daily and cumulative caloric balance + burned fat equivalent (1 kg ≈ 7 700 kcal / 32 200 kJ)
+ * strictly across days with credible logged intake so unlogged days, "1-coffee" partial days,
+ * or an unfinished morning today never artificially inflate total deficit or burned fat.
  */
 export function computeLoggedCalorieBalanceStats(
   dailySummaries: DailySummaryRow[],
-  targetDeficitKcal: number
+  targetDeficitKcal: number,
+  options?: {
+    todayDate?: string;
+    minCredibleIntakeKcal?: number;
+  }
 ): CalorieBalanceStatsSummary {
-  const logged = dailySummaries
+  const nonEmpty = dailySummaries
     .filter((row) => row.entries_count > 0 && row.intake_kcal > 0)
     .slice()
     .sort((a, b) => a.log_date.localeCompare(b.log_date));
 
-  if (logged.length === 0) {
+  if (nonEmpty.length === 0) {
     return {
       points: [],
       loggedDaysCount: 0,
+      excludedIncompleteDaysCount: 0,
+      todayExcludedAsIncomplete: false,
+      totalNetKcal: 0,
+      totalIntakeKcal: 0,
+      totalBurnedKcal: 0,
+      burnedFatKg: 0,
+      burnedFatGrams: 0,
       avgNetKcal: null,
       avgIntakeKcal: null,
       avgBurnedKcal: null,
@@ -283,10 +314,58 @@ export function computeLoggedCalorieBalanceStats(
     };
   }
 
-  const points: CalorieBalanceDayPoint[] = logged.map((row) => {
+  let excludedIncompleteDaysCount = 0;
+  let todayExcludedAsIncomplete = false;
+
+  const credibleRows = nonEmpty.filter((row) => {
+    const intake = Math.round(row.intake_kcal);
+    const baseExp = Math.round(row.base_expenditure_kcal || 2000);
+    const baseTarget = Math.max(1200, baseExp + targetDeficitKcal);
+
+    const isToday =
+      options?.todayDate !== undefined && row.log_date === options.todayDate;
+
+    const minThreshold =
+      options?.minCredibleIntakeKcal ??
+      (isToday
+        ? Math.max(950, Math.round(baseTarget * 0.55))
+        : Math.min(800, Math.max(550, Math.round(baseTarget * 0.45))));
+
+    if (intake < minThreshold) {
+      excludedIncompleteDaysCount++;
+      if (isToday) {
+        todayExcludedAsIncomplete = true;
+      }
+      return false;
+    }
+    return true;
+  });
+
+  if (credibleRows.length === 0) {
+    return {
+      points: [],
+      loggedDaysCount: 0,
+      excludedIncompleteDaysCount,
+      todayExcludedAsIncomplete,
+      totalNetKcal: 0,
+      totalIntakeKcal: 0,
+      totalBurnedKcal: 0,
+      burnedFatKg: 0,
+      burnedFatGrams: 0,
+      avgNetKcal: null,
+      avgIntakeKcal: null,
+      avgBurnedKcal: null,
+      daysOnTargetCount: 0,
+    };
+  }
+
+  let runningNetKcal = 0;
+
+  const points: CalorieBalanceDayPoint[] = credibleRows.map((row) => {
     const intakeKcal = Math.round(row.intake_kcal);
     const burnedTotalKcal = Math.round(row.burned_total_kcal);
     const netKcal = Math.round(row.net_kcal ?? intakeKcal - burnedTotalKcal);
+    runningNetKcal += netKcal;
 
     // Tolerance +150 kcal for deficit/maintenance goals, -150 kcal for surplus goals
     const onTarget =
@@ -300,21 +379,95 @@ export function computeLoggedCalorieBalanceStats(
       burnedTotalKcal,
       netKcal,
       onTarget,
+      cumulativeNetKcal: runningNetKcal,
+      cumulativeFatKg: round2(runningNetKcal / KCAL_PER_KG_FAT),
     };
   });
 
-  const sumNet = points.reduce((acc, p) => acc + p.netKcal, 0);
+  const sumNet = runningNetKcal;
   const sumIntake = points.reduce((acc, p) => acc + p.intakeKcal, 0);
   const sumBurned = points.reduce((acc, p) => acc + p.burnedTotalKcal, 0);
   const daysOnTargetCount = points.filter((p) => p.onTarget).length;
+  const burnedFatKg = round2(sumNet / KCAL_PER_KG_FAT);
+  const burnedFatGrams = Math.round((sumNet / KCAL_PER_KG_FAT) * 1000);
 
   return {
     points,
     loggedDaysCount: points.length,
+    excludedIncompleteDaysCount,
+    todayExcludedAsIncomplete,
+    totalNetKcal: sumNet,
+    totalIntakeKcal: sumIntake,
+    totalBurnedKcal: sumBurned,
+    burnedFatKg,
+    burnedFatGrams,
     avgNetKcal: Math.round(sumNet / points.length),
     avgIntakeKcal: Math.round(sumIntake / points.length),
     avgBurnedKcal: Math.round(sumBurned / points.length),
     daysOnTargetCount,
+  };
+}
+
+function formatKgCs(val: number, decimals = 2): string {
+  return Math.abs(val)
+    .toFixed(decimals)
+    .replace(/0$/, "")
+    .replace(/\.$/, "")
+    .replace(".", ",");
+}
+
+/**
+ * Compares cumulative fat burned from caloric deficit against actual scale weight change
+ * to explain water retention ("whoosh effect"), glycogen depletion, or close alignment.
+ */
+export function computeFatVsWeightComparisonInsight(params: {
+  burnedFatKg: number;
+  loggedDaysCount: number;
+  weightDeltaKg: number | null;
+  weightPointsCount: number;
+}): FatVsWeightInsight | null {
+  const { burnedFatKg, loggedDaysCount, weightDeltaKg, weightPointsCount } =
+    params;
+
+  if (
+    loggedDaysCount < 2 ||
+    weightDeltaKg === null ||
+    weightPointsCount < 2 ||
+    burnedFatKg >= -0.08
+  ) {
+    return null;
+  }
+
+  const diffKg = round2(weightDeltaKg - burnedFatKg);
+  const fatStr = `${formatKgCs(burnedFatKg, 2)} kg`;
+  const weightSign = weightDeltaKg < 0 ? "−" : weightDeltaKg > 0 ? "+" : "";
+  const weightStr = `${weightSign}${formatKgCs(weightDeltaKg, 1)} kg`;
+
+  // Case C: Close alignment within ±0.4 kg
+  if (Math.abs(diffKg) <= 0.4) {
+    return {
+      tone: "emerald",
+      title: "Přesná shoda spáleného tuku a váhy",
+      body: `Vypočtený úbytek čistého tuku z tvého deficitu (−${fatStr}) téměř přesně odpovídá změně na váze (${weightStr}). Tvůj odhad denního výdeje i zapisování jídel sedí na jedničku.`,
+    };
+  }
+
+  // Case A: Scale dropped less than fat burned (water retention masking fat loss)
+  if (diffKg > 0.4) {
+    const waterHeldStr = `${formatKgCs(diffKg, 1)} kg`;
+    return {
+      tone: "sky",
+      title: "Tuk mizí rychleji, než zatím ukazuje váha",
+      body: `Podle kalorického deficitu už tělo spálilo přibližně ${fatStr} čistého tuku, zatímco váha ukazuje ${weightStr}. Rozdíl (~${waterHeldStr}) tvoří jen dočasně zadržená voda (ve svalech po tréninku, ze soli nebo trávení) — jakmile tělo vodu uvolní, váha skokově dožene tvůj deficit.`,
+    };
+  }
+
+  // Case B: Scale dropped more than fat burned (initial glycogen + bound water release)
+  const waterReleasedStr = `${formatKgCs(Math.abs(diffKg), 1)} kg`;
+  return {
+    tone: "teal",
+    title: "Čistý spálený tuk + odplavení přebytečné vody",
+    body: `Váha klesla o ${weightStr}, z toho přibližně −${fatStr} tvoří trvale spálený tuk z kalorického deficitu a ~${waterReleasedStr} uvolněný glykogen a navázaná voda. Až se odvodnění ustálí, tempo na váze plynule přejde na čisté spalování tuku.`,
   };
 }
 

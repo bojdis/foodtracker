@@ -655,14 +655,14 @@ export function DailyBalanceCard({
               <div className="text-xs font-semibold text-slate-600 dark:text-slate-300">
                 <MetricTooltip
                   align="right"
-                  title="Čistá energetická bilance dne"
-                  description="Rozdíl Příjem − Celkový výdej. Záporné číslo znamená kalorický deficit (tělo bere chybějící energii z tukových zásob). Kladné číslo znamená přebytek."
-                  formula={`Cílová bilance: ${formatEnergyValue(targetDeficit, energyUnit, { signed: true })} ${unit}`}
+                  title="Čistá energetická bilance dne & přepočet na tuk"
+                  description="Rozdíl Příjem − Celkový výdej. Záporné číslo znamená kalorický deficit (1 kg tukové tkáně ≈ 32 200 kJ / 7 700 kcal). Dokud není den z velké části zapsaný, číslo odráží průběžný stav."
+                  formula={`Cílová bilance: ${formatEnergyValue(targetDeficit, energyUnit, { signed: true })} ${unit} (≈ ${Math.round((targetDeficit / 7700) * 1000)} g tuku / den)`}
                 >
                   Čistá bilance
                 </MetricTooltip>
               </div>
-              <div>
+              <div className="text-right sm:text-left">
                 <div className="mt-0.5 text-xl font-extrabold tabular-nums text-slate-900 dark:text-white">
                   {formatEnergyValue(netKcal, energyUnit, { signed: true })}{" "}
                   <span className="text-xs font-medium text-slate-500">
@@ -670,8 +670,18 @@ export function DailyBalanceCard({
                   </span>
                 </div>
                 <div className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">
-                  Cíl deficitu:{" "}
-                  {formatEnergy(targetDeficit, energyUnit, { signed: true })}
+                  {intakeKcal >= Math.max(850, Math.round(baseTargetIntakeKcal * 0.55)) ? (
+                    <span className="font-semibold text-emerald-700 dark:text-emerald-300">
+                      ≈ {netKcal <= 0 ? "−" : "+"}
+                      {Math.abs(Math.round((netKcal / 7700) * 1000))} g tuku · cíl{" "}
+                      {formatEnergy(targetDeficit, energyUnit, { signed: true })}
+                    </span>
+                  ) : (
+                    <span>
+                      Den probíhá · cíl{" "}
+                      {formatEnergy(targetDeficit, energyUnit, { signed: true })}
+                    </span>
+                  )}
                 </div>
               </div>
             </div>
@@ -723,7 +733,7 @@ export function DailyBalanceCard({
                 className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-500/10 px-3 py-1.5 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-500/20 dark:text-emerald-300"
               >
                 <TrendingDown className="h-3.5 w-3.5" />
-                Zobrazit grafy váhy, pasu a dlouhodobého progresu →
+                Progres: Celkový deficit, spálený tuk (kg) a vývoj váhy →
               </button>
             </div>
           )}

@@ -32,13 +32,17 @@ import {
 } from "@/lib/calculations";
 import {
   computeBloodPressureStats,
+  computeFatVsWeightComparisonInsight,
   computeLoggedCalorieBalanceStats,
   computeWaistStats,
   computeWeightTrendSeries,
+  KCAL_PER_KG_FAT,
   type BloodPressureStatsSummary,
   type BloodPressureTrendPoint,
+  type CalorieBalanceDayPoint,
 } from "@/lib/progress-stats";
 import { safeFetchJson } from "@/lib/safe-fetch";
+import { MetricTooltip } from "./MetricTooltip";
 import { WaistMeasurementGuide } from "./WaistMeasurementGuide";
 
 type PeriodOption = "7" | "30" | "90" | "all";
@@ -230,9 +234,26 @@ export function BodyProgressView({
     () =>
       computeLoggedCalorieBalanceStats(
         dailySummaries,
-        profile?.target_deficit_kcal ?? -500
+        profile?.target_deficit_kcal ?? -500,
+        { todayDate }
       ),
-    [dailySummaries, profile?.target_deficit_kcal]
+    [dailySummaries, profile?.target_deficit_kcal, todayDate]
+  );
+
+  const fatVsWeightInsight = useMemo(
+    () =>
+      computeFatVsWeightComparisonInsight({
+        burnedFatKg: calorieStats.burnedFatKg,
+        loggedDaysCount: calorieStats.loggedDaysCount,
+        weightDeltaKg: weightStats.deltaFromStartKg,
+        weightPointsCount: weightStats.points.length,
+      }),
+    [
+      calorieStats.burnedFatKg,
+      calorieStats.loggedDaysCount,
+      weightStats.deltaFromStartKg,
+      weightStats.points.length,
+    ]
   );
 
   const effectiveLastBpSys = bpStats.latestSys ?? storedBp.sys;
@@ -1051,50 +1072,127 @@ export function BodyProgressView({
           </div>
         </div>
 
-        {/* Energy Balance KPI */}
-        <div className="rounded-3xl border border-slate-200/80 bg-white/95 p-4 shadow-sm dark:border-slate-800/90 dark:bg-slate-900/90">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-              Průměrná bilance
-            </span>
+        {/* Cumulative Deficit & Burned Fat KPI */}
+        <div className="rounded-3xl border border-emerald-500/25 bg-gradient-to-br from-emerald-500/8 via-white to-teal-500/5 p-4 shadow-sm dark:border-emerald-500/20 dark:from-emerald-950/25 dark:via-slate-900 dark:to-slate-900">
+          <div className="flex items-center justify-between gap-1">
+            <MetricTooltip
+              title="Spálený tuk z celkového deficitu"
+              description={`Každých ${energyUnit === "kj" ? "32 200 kJ (7 700 kcal)" : "7 700 kcal (32 200 kJ)"} celkového kalorického deficitu odpovídá přibližně 1 kg čisté tukové tkáně. Počítáno pouze z věrohodně zapsaných dnů, aby neúplné dny nebo rozjedený dnešek výsledek nezkreslovaly.`}
+              formula={
+                calorieStats.loggedDaysCount > 0
+                  ? `${formatEnergy(calorieStats.totalNetKcal, energyUnit, { signed: true })} ÷ ${energyUnit === "kj" ? "32 200 kJ" : "7 700 kcal"} = ${calorieStats.burnedFatKg <= 0 ? "−" : "+"}${formatNumCs(Math.abs(calorieStats.burnedFatKg), 2)} kg tuku`
+                  : undefined
+              }
+              className="text-xs font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-300"
+            >
+              Spálený tuk & deficit
+            </MetricTooltip>
             {calorieStats.loggedDaysCount > 0 && (
-              <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[11px] font-bold text-emerald-700 dark:text-emerald-300">
+              <span className="shrink-0 rounded-full bg-emerald-500/15 px-2 py-0.5 text-[11px] font-bold text-emerald-700 dark:text-emerald-300">
                 {calorieStats.daysOnTargetCount}/{calorieStats.loggedDaysCount}{" "}
-                dnů v cíli
+                v cíli
               </span>
             )}
           </div>
 
-          <div className="mt-2 text-2xl font-extrabold tabular-nums tracking-tight text-slate-900 dark:text-white">
-            {calorieStats.avgNetKcal !== null
-              ? formatEnergy(calorieStats.avgNetKcal, energyUnit, {
-                  signed: true,
-                })
-              : "—"}
+          <div className="mt-2 flex items-baseline gap-1.5">
+            <span
+              className={`text-2xl font-extrabold tabular-nums tracking-tight ${
+                calorieStats.loggedDaysCount === 0
+                  ? "text-slate-900 dark:text-white"
+                  : calorieStats.burnedFatKg <= 0
+                    ? "text-emerald-600 dark:text-emerald-400"
+                    : "text-amber-600 dark:text-amber-400"
+              }`}
+            >
+              {calorieStats.loggedDaysCount > 0
+                ? `${calorieStats.burnedFatKg < 0 ? "−" : calorieStats.burnedFatKg > 0 ? "+" : ""}${formatNumCs(Math.abs(calorieStats.burnedFatKg), 2)} kg tuku`
+                : "—"}
+            </span>
+            {calorieStats.loggedDaysCount > 0 &&
+              Math.abs(calorieStats.burnedFatKg) > 0 &&
+              Math.abs(calorieStats.burnedFatKg) < 1 && (
+                <span className="text-xs font-bold tabular-nums text-slate-500 dark:text-slate-400">
+                  ({calorieStats.burnedFatGrams < 0 ? "−" : "+"}
+                  {Math.abs(calorieStats.burnedFatGrams)} g)
+                </span>
+              )}
           </div>
 
-          <div className="mt-1.5 space-y-1 text-xs text-slate-500 dark:text-slate-400">
-            {weeklyPaceKg !== null ? (
+          <div className="mt-1.5 space-y-1 text-xs text-slate-600 dark:text-slate-400">
+            {calorieStats.loggedDaysCount > 0 &&
+            calorieStats.avgNetKcal !== null ? (
               <>
                 <div>
-                  Odhad tempa:{" "}
-                  <strong className="font-bold text-emerald-600 dark:text-emerald-400">
-                    ≈ {formatSignedNumCs(weeklyPaceKg, "kg")} / týden
+                  Celkový deficit:{" "}
+                  <strong className="font-bold tabular-nums text-slate-900 dark:text-white">
+                    {formatEnergy(calorieStats.totalNetKcal, energyUnit, {
+                      signed: true,
+                    })}
                   </strong>
                 </div>
                 <div className="text-[11px]">
-                  Počítáno jen ze zapsaných dnů ({calorieStats.loggedDaysCount})
+                  Průměr{" "}
+                  <strong className="font-semibold text-slate-700 dark:text-slate-200">
+                    {formatEnergy(calorieStats.avgNetKcal, energyUnit, {
+                      signed: true,
+                    })}
+                    /den
+                  </strong>
+                  {weeklyPaceKg !== null
+                    ? ` (≈ ${formatSignedNumCs(weeklyPaceKg, "kg")}/týd.)`
+                    : ""}
                 </div>
+                {(calorieStats.todayExcludedAsIncomplete ||
+                  calorieStats.excludedIncompleteDaysCount > 0) && (
+                  <div className="text-[10.5px] text-slate-400 dark:text-slate-500">
+                    {calorieStats.todayExcludedAsIncomplete
+                      ? "Probíhající dnešek se započte po zapsání hlavních jídel"
+                      : `Vynecháno ${calorieStats.excludedIncompleteDaysCount} neúplných dnů`}
+                  </div>
+                )}
               </>
             ) : (
               <div className="text-[11px]">
-                Jakmile zapíšeš dnešní jídla, ukáže se průměrný denní deficit i
-                týdenní tempo.
+                {calorieStats.todayExcludedAsIncomplete
+                  ? "Dnešní den ještě probíhá — jakmile zapíšeš hlavní jídla dne, spočítá se celkový deficit i spálený tuk."
+                  : "Jakmile zapíšeš celý den jídel, ukáže se celkový kalorický deficit i přepočet na spálený tuk (1 kg ≈ 32 200 kJ)."}
               </div>
             )}
           </div>
         </div>
       </div>
+
+      {/* 4b. Smart Physiological Comparison: Burned Fat from Deficit vs. Scale Weight */}
+      {fatVsWeightInsight && (
+        <div
+          className={`flex items-start gap-3 rounded-3xl border p-4 text-xs leading-relaxed ${
+            fatVsWeightInsight.tone === "emerald"
+              ? "border-emerald-500/30 bg-emerald-500/8 text-slate-800 dark:text-slate-200"
+              : fatVsWeightInsight.tone === "sky"
+                ? "border-sky-500/30 bg-gradient-to-r from-sky-500/10 via-emerald-500/8 to-teal-500/10 text-slate-800 dark:text-slate-200"
+                : "border-teal-500/30 bg-teal-500/8 text-slate-800 dark:text-slate-200"
+          }`}
+        >
+          <div
+            className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-xl ${
+              fatVsWeightInsight.tone === "emerald"
+                ? "bg-emerald-500/20 text-emerald-600 dark:text-emerald-300"
+                : fatVsWeightInsight.tone === "sky"
+                  ? "bg-sky-500/20 text-sky-600 dark:text-sky-300"
+                  : "bg-teal-500/20 text-teal-600 dark:text-teal-300"
+            }`}
+          >
+            <Flame className="h-4 w-4" />
+          </div>
+          <div>
+            <strong className="font-bold text-slate-900 dark:text-white">
+              {fatVsWeightInsight.title}:{" "}
+            </strong>
+            <span>{fatVsWeightInsight.body}</span>
+          </div>
+        </div>
+      )}
 
       {/* 5. CHART 1: Weight & 7-Day Moving Average */}
       <WeightTrendChartCard
@@ -1119,9 +1217,11 @@ export function BodyProgressView({
         onSelectIndex={setActiveBpIdx}
       />
 
-      {/* 8. CHART 3: Daily Energy Balance Bars */}
+      {/* 8. CHART 3: Daily & Cumulative Energy Balance + Burned Fat Milestones */}
       <EnergyBalanceChartCard
         points={calorieStats.points}
+        totalNetKcal={calorieStats.totalNetKcal}
+        burnedFatKg={calorieStats.burnedFatKg}
         energyUnit={energyUnit}
         targetDeficitKcal={profile?.target_deficit_kcal ?? -500}
         activeIndex={activeCalorieIdx}
@@ -1764,27 +1864,30 @@ function WaistTrendChartCard({
 }
 
 /* ============================================================================
- * SVG CHART 3: Daily Energy Balance Bars (kJ or kcal)
+ * SVG CHART 3: Daily & Cumulative Energy Balance + Burned Fat (kg)
  * ========================================================================== */
+const FAT_MILESTONES_KG = [0.5, 1, 2.5, 5, 10];
+
 function EnergyBalanceChartCard({
   points,
+  totalNetKcal,
+  burnedFatKg,
   energyUnit,
   targetDeficitKcal,
   activeIndex,
   onSelectIndex,
 }: {
-  points: Array<{
-    date: string;
-    intakeKcal: number;
-    burnedTotalKcal: number;
-    netKcal: number;
-    onTarget: boolean;
-  }>;
+  points: CalorieBalanceDayPoint[];
+  totalNetKcal: number;
+  burnedFatKg: number;
   energyUnit: EnergyUnit;
   targetDeficitKcal: number;
   activeIndex: number | null;
   onSelectIndex: (idx: number | null) => void;
 }) {
+  const [chartMode, setChartMode] = useState<"daily" | "cumulative">(
+    "cumulative"
+  );
   const W = 600;
   const H = 210;
   const pad = { left: 58, right: 16, top: 18, bottom: 28 };
@@ -1796,16 +1899,23 @@ function EnergyBalanceChartCard({
       <section className="rounded-3xl border border-dashed border-slate-300/80 bg-white/70 p-5 text-center dark:border-slate-800 dark:bg-slate-900/50">
         <Flame className="mx-auto h-6 w-6 text-amber-500" />
         <h3 className="mt-2 text-sm font-bold text-slate-900 dark:text-white">
-          Graf denní energetické bilance
+          Graf kalorického deficitu a spáleného tuku
         </h3>
         <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-          Zde uvidíš sloupce denního deficitu nebo přebytku za každý zapsaný den.
+          Zde uvidíš kumulativní křivku spáleného tuku (kg) i denní sloupce
+          energetické bilance za každý zapsaný den.
         </p>
       </section>
     );
   }
 
   const recentPoints = points.slice(-30);
+  const inspected =
+    activeIndex !== null && recentPoints[activeIndex]
+      ? recentPoints[activeIndex]
+      : recentPoints[recentPoints.length - 1];
+
+  // Daily bars calculations
   const netValsConverted = recentPoints.map((p) =>
     convertFromKcal(p.netKcal, energyUnit)
   );
@@ -1823,158 +1933,414 @@ function EnergyBalanceChartCard({
   const maxY = Math.ceil((maxVal + padAmount) / stepRound) * stepRound;
   const spanY = Math.max(stepRound * 2, maxY - minY);
 
-  const getY = (valConverted: number) =>
+  const getDailyY = (valConverted: number) =>
     pad.top + PH - ((valConverted - minY) / spanY) * PH;
 
-  const zeroY = getY(0);
-  const targetY = getY(targetConverted);
+  const zeroY = getDailyY(0);
+  const targetY = getDailyY(targetConverted);
 
   const slotWidth = PW / recentPoints.length;
   const barWidth = Math.min(28, Math.max(6, slotWidth * 0.68));
 
-  const inspected =
-    activeIndex !== null && recentPoints[activeIndex]
-      ? recentPoints[activeIndex]
-      : recentPoints[recentPoints.length - 1];
+  // Cumulative fat (kg) curve calculations
+  const cumFatVals = recentPoints.map((p) => p.cumulativeFatKg);
+  const cumMinRaw = Math.min(0, ...cumFatVals);
+  const cumMaxRaw = Math.max(0.1, ...cumFatVals);
+  const cumSpread = Math.max(0.4, cumMaxRaw - cumMinRaw);
+  const cumMinY = Math.floor((cumMinRaw - cumSpread * 0.18) * 10) / 10;
+  const cumMaxY = Math.ceil((cumMaxRaw + cumSpread * 0.15) * 10) / 10;
+  const cumSpanY = Math.max(0.2, cumMaxY - cumMinY);
+
+  const getCumX = (idx: number) => {
+    if (recentPoints.length === 1) return pad.left + PW / 2;
+    return pad.left + (idx / (recentPoints.length - 1)) * PW;
+  };
+  const getCumY = (fatKg: number) =>
+    pad.top + PH - ((fatKg - cumMinY) / cumSpanY) * PH;
+
+  const cumZeroY = getCumY(0);
+  const cumLinePath = recentPoints
+    .map(
+      (p, i) =>
+        `${i === 0 ? "M" : "L"} ${getCumX(i).toFixed(1)} ${getCumY(p.cumulativeFatKg).toFixed(1)}`
+    )
+    .join(" ");
+  const cumAreaPath =
+    recentPoints.length >= 2
+      ? `${cumLinePath} L ${getCumX(recentPoints.length - 1).toFixed(1)} ${cumZeroY.toFixed(1)} L ${getCumX(0).toFixed(1)} ${cumZeroY.toFixed(1)} Z`
+      : "";
+
+  const cumTicks = [
+    round1(cumMinY),
+    0,
+    round1((cumMinY + cumMaxY) / 2),
+  ].filter((v, i, arr) => v >= cumMinY && v <= cumMaxY && arr.indexOf(v) === i);
+
+  // Milestones calculation (positive burned fat in kg when totalNetKcal < 0)
+  const burnedPositiveKg = Math.max(0, round1(-burnedFatKg * 10) / 10);
+  const nextMilestoneKg =
+    FAT_MILESTONES_KG.find((m) => m > burnedPositiveKg) ?? null;
+  const remainingToNextMilestoneKg =
+    nextMilestoneKg !== null
+      ? Math.max(0, Math.round((nextMilestoneKg - burnedPositiveKg) * 100) / 100)
+      : null;
+  const remainingToNextMilestoneKcal =
+    remainingToNextMilestoneKg !== null
+      ? Math.round(remainingToNextMilestoneKg * KCAL_PER_KG_FAT)
+      : null;
 
   return (
     <section className="rounded-3xl border border-slate-200/80 bg-white/95 p-4 shadow-sm sm:p-5 dark:border-slate-800/90 dark:bg-slate-900/90">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div>
-          <h3 className="text-sm font-extrabold text-slate-900 dark:text-white">
-            Energetická bilance po dnech (příjem − výdej)
-          </h3>
-          <p className="text-xs text-slate-500 dark:text-slate-400">
-            Zelené sloupce = splněný denní cíl (
-            {formatEnergy(targetDeficitKcal, energyUnit, { signed: true })})
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="text-sm font-extrabold text-slate-900 dark:text-white">
+              {chartMode === "cumulative"
+                ? "Kumulativní spálený tuk a kalorický deficit"
+                : "Energetická bilance po dnech (příjem − výdej)"}
+            </h3>
+            <div className="inline-flex rounded-xl border border-slate-200/80 bg-slate-100 p-0.5 text-[11px] font-bold dark:border-slate-800 dark:bg-slate-950">
+              <button
+                type="button"
+                onClick={() => setChartMode("cumulative")}
+                className={`rounded-lg px-2 py-0.5 transition ${
+                  chartMode === "cumulative"
+                    ? "bg-emerald-500 text-white shadow-2xs"
+                    : "text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white"
+                }`}
+              >
+                Kumulativně (tuk)
+              </button>
+              <button
+                type="button"
+                onClick={() => setChartMode("daily")}
+                className={`rounded-lg px-2 py-0.5 transition ${
+                  chartMode === "daily"
+                    ? "bg-emerald-500 text-white shadow-2xs"
+                    : "text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white"
+                }`}
+              >
+                Po dnech
+              </button>
+            </div>
+          </div>
+          <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
+            {chartMode === "cumulative"
+              ? `1 kg tuku ≈ ${energyUnit === "kj" ? "32 200 kJ" : "7 700 kcal"} · Celkem za období: ${formatEnergy(totalNetKcal, energyUnit, { signed: true })} (${burnedFatKg <= 0 ? "−" : "+"}${formatNumCs(Math.abs(burnedFatKg), 2)} kg tuku)`
+              : `Zelené sloupce = splněný denní cíl (${formatEnergy(targetDeficitKcal, energyUnit, { signed: true })})`}
           </p>
         </div>
 
         <div className="rounded-2xl bg-slate-100 px-3 py-1.5 text-right text-xs tabular-nums dark:bg-slate-800">
-          <div className="font-bold text-slate-900 dark:text-white">
-            {formatShortDateCs(inspected.date)}:{" "}
-            <span
-              className={
-                inspected.onTarget
-                  ? "text-emerald-600 dark:text-emerald-400"
-                  : "text-amber-600 dark:text-amber-400"
-              }
-            >
-              {formatEnergy(inspected.netKcal, energyUnit, { signed: true })}
-            </span>
-          </div>
-          <div className="text-[11px] text-slate-500 dark:text-slate-400">
-            Příjem {formatEnergyValue(inspected.intakeKcal, energyUnit)} · Výdej{" "}
-            {formatEnergyValue(inspected.burnedTotalKcal, energyUnit)}
-          </div>
+          {chartMode === "cumulative" ? (
+            <>
+              <div className="font-bold text-slate-900 dark:text-white">
+                Do {formatShortDateCs(inspected.date)}:{" "}
+                <span
+                  className={
+                    inspected.cumulativeFatKg <= 0
+                      ? "text-emerald-600 dark:text-emerald-400"
+                      : "text-amber-600 dark:text-amber-400"
+                  }
+                >
+                  {inspected.cumulativeFatKg < 0
+                    ? "−"
+                    : inspected.cumulativeFatKg > 0
+                      ? "+"
+                      : ""}
+                  {formatNumCs(Math.abs(inspected.cumulativeFatKg), 2)} kg tuku
+                </span>
+              </div>
+              <div className="text-[11px] text-slate-500 dark:text-slate-400">
+                Kumulativně:{" "}
+                {formatEnergy(inspected.cumulativeNetKcal, energyUnit, {
+                  signed: true,
+                })}{" "}
+                (ten den{" "}
+                {formatEnergy(inspected.netKcal, energyUnit, { signed: true })})
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="font-bold text-slate-900 dark:text-white">
+                {formatShortDateCs(inspected.date)}:{" "}
+                <span
+                  className={
+                    inspected.onTarget
+                      ? "text-emerald-600 dark:text-emerald-400"
+                      : "text-amber-600 dark:text-amber-400"
+                  }
+                >
+                  {formatEnergy(inspected.netKcal, energyUnit, { signed: true })}
+                </span>
+              </div>
+              <div className="text-[11px] text-slate-500 dark:text-slate-400">
+                Příjem {formatEnergyValue(inspected.intakeKcal, energyUnit)} ·
+                Výdej {formatEnergyValue(inspected.burnedTotalKcal, energyUnit)}
+              </div>
+            </>
+          )}
         </div>
       </div>
 
       <div className="mt-3">
-        <svg
-          viewBox={`0 0 ${W} ${H}`}
-          className="h-48 w-full overflow-visible select-none"
-          onMouseLeave={() => onSelectIndex(null)}
-        >
-          {/* Zero Line */}
-          <line
-            x1={pad.left}
-            y1={zeroY}
-            x2={W - pad.right}
-            y2={zeroY}
-            stroke="currentColor"
-            className="text-slate-300 dark:text-slate-700"
-            strokeWidth="1.5"
-          />
-          <text
-            x={pad.left - 8}
-            y={zeroY + 4}
-            textAnchor="end"
-            className="fill-slate-400 text-[11px] font-semibold tabular-nums"
+        {chartMode === "cumulative" ? (
+          <svg
+            viewBox={`0 0 ${W} ${H}`}
+            className="h-48 w-full overflow-visible select-none"
+            onMouseLeave={() => onSelectIndex(null)}
           >
-            0
-          </text>
+            <defs>
+              <linearGradient id="cumFatFill" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor="#10b981" stopOpacity="0.04" />
+                <stop offset="100%" stopColor="#10b981" stopOpacity="0.28" />
+              </linearGradient>
+            </defs>
 
-          {/* Target Deficit Line */}
-          {targetDeficitKcal !== 0 && (
-            <g>
-              <line
-                x1={pad.left}
-                y1={targetY}
-                x2={W - pad.right}
-                y2={targetY}
+            {cumTicks.map((tick) => {
+              const y = getCumY(tick);
+              return (
+                <g key={tick}>
+                  <line
+                    x1={pad.left}
+                    y1={y}
+                    x2={W - pad.right}
+                    y2={y}
+                    stroke="currentColor"
+                    className={
+                      tick === 0
+                        ? "text-slate-300 dark:text-slate-700"
+                        : "text-slate-200 dark:text-slate-800"
+                    }
+                    strokeWidth={tick === 0 ? "1.5" : "1"}
+                  />
+                  <text
+                    x={pad.left - 8}
+                    y={y + 4}
+                    textAnchor="end"
+                    className="fill-slate-400 text-[10px] font-semibold tabular-nums"
+                  >
+                    {tick < 0
+                      ? `−${formatNumCs(Math.abs(tick))} kg`
+                      : tick > 0
+                        ? `+${formatNumCs(tick)} kg`
+                        : "0 kg"}
+                  </text>
+                </g>
+              );
+            })}
+
+            {cumAreaPath && <path d={cumAreaPath} fill="url(#cumFatFill)" />}
+
+            {recentPoints.length >= 2 && (
+              <path
+                d={cumLinePath}
+                fill="none"
                 stroke="#10b981"
-                strokeWidth="1.25"
-                strokeDasharray="4 4"
+                strokeWidth="3"
+                strokeLinecap="round"
+                strokeLinejoin="round"
               />
-              <text
-                x={pad.left - 8}
-                y={targetY + 4}
-                textAnchor="end"
-                className="fill-emerald-600 text-[10px] font-bold tabular-nums dark:fill-emerald-400"
-              >
-                {formatEnergyValue(targetDeficitKcal, energyUnit)}
-              </text>
-            </g>
-          )}
+            )}
 
-          {/* Bars */}
-          {recentPoints.map((p, idx) => {
-            const x = pad.left + idx * slotWidth + (slotWidth - barWidth) / 2;
-            const convertedVal = convertFromKcal(p.netKcal, energyUnit);
-            const yVal = getY(convertedVal);
-            const top = Math.min(zeroY, yVal);
-            const height = Math.max(3, Math.abs(yVal - zeroY));
-            const isSelected =
-              activeIndex === idx ||
-              (activeIndex === null && idx === recentPoints.length - 1);
+            {recentPoints.map((p, idx) => {
+              const cx = getCumX(idx);
+              const cy = getCumY(p.cumulativeFatKg);
+              const isSelected =
+                activeIndex === idx ||
+                (activeIndex === null && idx === recentPoints.length - 1);
 
-            return (
-              <g
-                key={p.date}
-                className="cursor-pointer"
-                onMouseEnter={() => onSelectIndex(idx)}
-                onClick={() => onSelectIndex(idx)}
-              >
-                <rect
-                  x={x}
-                  y={top}
-                  width={barWidth}
-                  height={height}
-                  rx={4}
-                  fill={p.onTarget ? "#10b981" : "#f59e0b"}
-                  opacity={isSelected ? 1 : 0.78}
-                />
-                <rect
-                  x={pad.left + idx * slotWidth}
-                  y={pad.top}
-                  width={slotWidth}
-                  height={PH}
-                  fill="transparent"
-                />
-              </g>
-            );
-          })}
+              return (
+                <g
+                  key={p.date}
+                  className="cursor-pointer"
+                  onMouseEnter={() => onSelectIndex(idx)}
+                  onClick={() => onSelectIndex(idx)}
+                >
+                  <circle
+                    cx={cx}
+                    cy={cy}
+                    r={isSelected ? 5.5 : 3.5}
+                    fill={p.cumulativeFatKg <= 0 ? "#10b981" : "#f59e0b"}
+                    stroke="white"
+                    strokeWidth="2"
+                  />
+                  <circle cx={cx} cy={cy} r={16} fill="transparent" />
+                </g>
+              );
+            })}
 
-          <text
-            x={pad.left}
-            y={H - 6}
-            textAnchor="start"
-            className="fill-slate-400 text-[11px] font-medium"
-          >
-            {formatShortDateCs(recentPoints[0].date)}
-          </text>
-          {recentPoints.length > 1 && (
             <text
-              x={W - pad.right}
+              x={pad.left}
               y={H - 6}
-              textAnchor="end"
+              textAnchor="start"
               className="fill-slate-400 text-[11px] font-medium"
             >
-              {formatShortDateCs(recentPoints[recentPoints.length - 1].date)}
+              {formatShortDateCs(recentPoints[0].date)}
             </text>
+            {recentPoints.length > 1 && (
+              <text
+                x={W - pad.right}
+                y={H - 6}
+                textAnchor="end"
+                className="fill-slate-400 text-[11px] font-medium"
+              >
+                {formatShortDateCs(
+                  recentPoints[recentPoints.length - 1].date
+                )}
+              </text>
+            )}
+          </svg>
+        ) : (
+          <svg
+            viewBox={`0 0 ${W} ${H}`}
+            className="h-48 w-full overflow-visible select-none"
+            onMouseLeave={() => onSelectIndex(null)}
+          >
+            {/* Zero Line */}
+            <line
+              x1={pad.left}
+              y1={zeroY}
+              x2={W - pad.right}
+              y2={zeroY}
+              stroke="currentColor"
+              className="text-slate-300 dark:text-slate-700"
+              strokeWidth="1.5"
+            />
+            <text
+              x={pad.left - 8}
+              y={zeroY + 4}
+              textAnchor="end"
+              className="fill-slate-400 text-[11px] font-semibold tabular-nums"
+            >
+              0
+            </text>
+
+            {/* Target Deficit Line */}
+            {targetDeficitKcal !== 0 && (
+              <g>
+                <line
+                  x1={pad.left}
+                  y1={targetY}
+                  x2={W - pad.right}
+                  y2={targetY}
+                  stroke="#10b981"
+                  strokeWidth="1.25"
+                  strokeDasharray="4 4"
+                />
+                <text
+                  x={pad.left - 8}
+                  y={targetY + 4}
+                  textAnchor="end"
+                  className="fill-emerald-600 text-[10px] font-bold tabular-nums dark:fill-emerald-400"
+                >
+                  {formatEnergyValue(targetDeficitKcal, energyUnit)}
+                </text>
+              </g>
+            )}
+
+            {/* Bars */}
+            {recentPoints.map((p, idx) => {
+              const x =
+                pad.left + idx * slotWidth + (slotWidth - barWidth) / 2;
+              const convertedVal = convertFromKcal(p.netKcal, energyUnit);
+              const yVal = getDailyY(convertedVal);
+              const top = Math.min(zeroY, yVal);
+              const height = Math.max(3, Math.abs(yVal - zeroY));
+              const isSelected =
+                activeIndex === idx ||
+                (activeIndex === null && idx === recentPoints.length - 1);
+
+              return (
+                <g
+                  key={p.date}
+                  className="cursor-pointer"
+                  onMouseEnter={() => onSelectIndex(idx)}
+                  onClick={() => onSelectIndex(idx)}
+                >
+                  <rect
+                    x={x}
+                    y={top}
+                    width={barWidth}
+                    height={height}
+                    rx={4}
+                    fill={p.onTarget ? "#10b981" : "#f59e0b"}
+                    opacity={isSelected ? 1 : 0.78}
+                  />
+                  <rect
+                    x={pad.left + idx * slotWidth}
+                    y={pad.top}
+                    width={slotWidth}
+                    height={PH}
+                    fill="transparent"
+                  />
+                </g>
+              );
+            })}
+
+            <text
+              x={pad.left}
+              y={H - 6}
+              textAnchor="start"
+              className="fill-slate-400 text-[11px] font-medium"
+            >
+              {formatShortDateCs(recentPoints[0].date)}
+            </text>
+            {recentPoints.length > 1 && (
+              <text
+                x={W - pad.right}
+                y={H - 6}
+                textAnchor="end"
+                className="fill-slate-400 text-[11px] font-medium"
+              >
+                {formatShortDateCs(
+                  recentPoints[recentPoints.length - 1].date
+                )}
+              </text>
+            )}
+          </svg>
+        )}
+      </div>
+
+      {/* Fat-Loss Milestones Bar */}
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-slate-200/70 pt-3 text-xs dark:border-slate-800">
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
+            Milníky tuku:
+          </span>
+          {FAT_MILESTONES_KG.map((m) => {
+            const achieved = burnedPositiveKg >= m;
+            return (
+              <span
+                key={m}
+                className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-bold tabular-nums ${
+                  achieved
+                    ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
+                    : "border-slate-200/80 bg-slate-50 text-slate-400 dark:border-slate-800 dark:bg-slate-950/50 dark:text-slate-500"
+                }`}
+              >
+                {achieved && <Check className="h-2.5 w-2.5 stroke-[3]" />}
+                −{String(m).replace(".", ",")} kg
+              </span>
+            );
+          })}
+        </div>
+
+        {nextMilestoneKg !== null &&
+          remainingToNextMilestoneKg !== null &&
+          remainingToNextMilestoneKcal !== null && (
+            <span className="text-[11px] text-slate-500 dark:text-slate-400">
+              Do milníku{" "}
+              <strong className="text-slate-700 dark:text-slate-200">
+                −{String(nextMilestoneKg).replace(".", ",")} kg
+              </strong>{" "}
+              zbývá{" "}
+              <strong className="text-emerald-600 dark:text-emerald-400">
+                {formatNumCs(remainingToNextMilestoneKg, 2)} kg
+              </strong>{" "}
+              (≈ {formatEnergy(remainingToNextMilestoneKcal, energyUnit)})
+            </span>
           )}
-        </svg>
       </div>
     </section>
   );

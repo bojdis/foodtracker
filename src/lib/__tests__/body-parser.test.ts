@@ -5,6 +5,7 @@ import {
 } from "../body-parser";
 import {
   computeBloodPressureStats,
+  computeFatVsWeightComparisonInsight,
   computeLoggedCalorieBalanceStats,
   computeWaistStats,
   computeWeightTrendSeries,
@@ -237,7 +238,60 @@ describe("progress-stats calculations", () => {
     const stats = computeLoggedCalorieBalanceStats(summaries, -500);
     expect(stats.loggedDaysCount).toBe(2);
     expect(stats.avgNetKcal).toBe(-450);
+    expect(stats.totalNetKcal).toBe(-900);
+    expect(stats.burnedFatKg).toBe(-0.12); // -900 / 7700 = -0.11688 -> -0.12 kg
+    expect(stats.burnedFatGrams).toBe(-117);
     expect(stats.daysOnTargetCount).toBe(2);
+    expect(stats.points[0].cumulativeNetKcal).toBe(-500);
+    expect(stats.points[1].cumulativeNetKcal).toBe(-900);
+  });
+
+  it("excludes incomplete '1-coffee' days and unfinished today from cumulative deficit & burned fat", () => {
+    const summaries = [
+      makeDailySummary("2026-11-10", 1700, 2470, 5), // -770 kcal (-0.10 kg fat)
+      makeDailySummary("2026-11-11", 120, 2300, 1), // Incomplete day (only coffee) -> excluded!
+      makeDailySummary("2026-11-12", 1630, 2400, 4), // -770 kcal (cum -1540 kcal = -0.20 kg fat)
+      makeDailySummary("2026-11-13", 350, 2350, 1), // Today still in progress -> excluded!
+    ];
+
+    const stats = computeLoggedCalorieBalanceStats(summaries, -500, {
+      todayDate: "2026-11-13",
+    });
+
+    expect(stats.loggedDaysCount).toBe(2);
+    expect(stats.excludedIncompleteDaysCount).toBe(2);
+    expect(stats.todayExcludedAsIncomplete).toBe(true);
+    expect(stats.totalNetKcal).toBe(-1540);
+    expect(stats.burnedFatKg).toBe(-0.2);
+    expect(stats.burnedFatGrams).toBe(-200);
+  });
+
+  it("generates physiological fat-vs-weight comparison insights across all 3 scenarios", () => {
+    const waterRetention = computeFatVsWeightComparisonInsight({
+      burnedFatKg: -1.4,
+      loggedDaysCount: 14,
+      weightDeltaKg: -0.5,
+      weightPointsCount: 5,
+    });
+    expect(waterRetention?.tone).toBe("sky");
+    expect(waterRetention?.body).toContain("dočasně zadržená voda");
+
+    const glycogenDrop = computeFatVsWeightComparisonInsight({
+      burnedFatKg: -0.6,
+      loggedDaysCount: 7,
+      weightDeltaKg: -2.1,
+      weightPointsCount: 4,
+    });
+    expect(glycogenDrop?.tone).toBe("teal");
+    expect(glycogenDrop?.body).toContain("glykogen a navázaná voda");
+
+    const closeMatch = computeFatVsWeightComparisonInsight({
+      burnedFatKg: -1.8,
+      loggedDaysCount: 21,
+      weightDeltaKg: -1.9,
+      weightPointsCount: 6,
+    });
+    expect(closeMatch?.tone).toBe("emerald");
   });
 
   it("computes blood pressure moving average, ESC category and weight correlation insight", () => {
