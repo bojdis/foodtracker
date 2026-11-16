@@ -9,9 +9,6 @@ import {
   getTodayDateString,
 } from "@/lib/calculations";
 
-const SINGLE_OWNER_CONFLICT_MESSAGE =
-  "Tento tracker je nastaven v jednouživatelském režimu a už má svého vlastníka.";
-
 const PatchProfileUnitSchema = z.object({
   energy_unit: z.enum(["kj", "kcal"]),
 });
@@ -97,7 +94,6 @@ export async function POST(request: Request) {
     .upsert(
       {
         user_id: userId,
-        singleton_lock: true,
         display_name: input.display_name,
         sex: input.sex,
         birth_year: input.birth_year,
@@ -125,18 +121,6 @@ export async function POST(request: Request) {
     .single();
 
   if (upsertError) {
-    const isSingleOwnerViolation =
-      upsertError.code === "23505" ||
-      upsertError.code === "42501" ||
-      upsertError.message.toLowerCase().includes("singleton_lock");
-
-    if (isSingleOwnerViolation) {
-      return NextResponse.json(
-        { error: SINGLE_OWNER_CONFLICT_MESSAGE },
-        { status: 409 }
-      );
-    }
-
     return NextResponse.json(
       { error: upsertError.message },
       { status: 500 }

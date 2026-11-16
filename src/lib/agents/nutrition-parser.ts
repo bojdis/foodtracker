@@ -3,10 +3,13 @@ import { extractBodyMeasurementFromText } from "@/lib/body-parser";
 import { calculateActivityBurnedKcal } from "@/lib/calculations";
 import {
   buildPersonalPresetsSystemSection,
+  buildPresetsFromMealTemplates,
   tryResolvePersonalPresetEntry,
+  type PersonalMealPreset,
 } from "@/lib/presets";
 import {
   ParsedEntryResultSchema,
+  type MealTemplateRow,
   type ParsedEntryResult,
   type ParsedItem,
   type TimeSlot,
@@ -268,18 +271,19 @@ export function computeActivityBurnedKcal(
 function buildSystemInstruction(
   userWeightKg: number,
   fallbackTimeSlot: TimeSlot,
-  userBmrKcal?: number
+  userBmrKcal?: number,
+  userPresets: PersonalMealPreset[] = []
 ): string {
   const bmrInfo =
     userBmrKcal && userBmrKcal > 0
       ? ` Klidové BMR uživatele: ${Math.round(userBmrKcal)} kcal/den.`
       : "";
+  const presetsSection = buildPersonalPresetsSystemSection(userPresets);
   return [
     "Jsi expertní český nutriční a sportovní analytik pro aplikaci FoodTracker.",
     "Tvým úkolem je rozložit přirozeně napsaný český záznam na jednotlivé položky jídla/pití ('food') a pohybových aktivit ('activity').",
     `Aktuální hmotnost uživatele: ${userWeightKg} kg.${bmrInfo} Výchozí časový slot: ${fallbackTimeSlot}.`,
-    "",
-    buildPersonalPresetsSystemSection(),
+    ...(presetsSection ? ["", presetsSection] : []),
     "",
     "PRAVIDLA PRO OSTATNÍ ČESKÉ PORCE (pokud nejde o osobní zkratku výše a uživatel neuvede přesnou gramáž):",
     "- 1 rohlík = 43 g (~130 kcal), 1 houska/aiserka = 55 g",
@@ -500,12 +504,18 @@ export async function parseEntryWithAgent(params: {
   userWeightKg: number;
   userBmrKcal?: number;
   fallbackTimeSlot: TimeSlot;
+  userMealTemplates?: MealTemplateRow[];
 }): Promise<ParsedEntryResult> {
-  // 1. Exact deterministic match for Radek's personal meal shortcuts (0 latency, 100% label accuracy, 0 API tokens)
-  if (!params.imageBase64) {
+  const userPresets = buildPresetsFromMealTemplates(
+    params.userMealTemplates ?? []
+  );
+
+  // 1. Exact deterministic match for THIS user's personal meal shortcuts (0 latency, 100% accuracy, 0 API tokens)
+  if (!params.imageBase64 && userPresets.length > 0) {
     const presetMatch = tryResolvePersonalPresetEntry(
       params.rawText,
-      params.fallbackTimeSlot
+      params.fallbackTimeSlot,
+      userPresets
     );
     if (presetMatch) {
       return presetMatch;
@@ -582,7 +592,8 @@ export async function parseEntryWithAgent(params: {
         system_instruction: buildSystemInstruction(
           safeWeight,
           params.fallbackTimeSlot,
-          params.userBmrKcal
+          params.userBmrKcal,
+          userPresets
         ),
         input: inputPayload,
         generation_config: {
@@ -1325,15 +1336,22 @@ export function parseEntryFallback(
     userWeightKg: number;
     userBmrKcal?: number;
     fallbackTimeSlot: TimeSlot;
+    userMealTemplates?: MealTemplateRow[];
   },
   customAiNote: string = FALLBACK_AI_NOTE
 ): ParsedEntryResult {
-  const presetMatch = tryResolvePersonalPresetEntry(
-    params.rawText,
-    params.fallbackTimeSlot
+  const userPresets = buildPresetsFromMealTemplates(
+    params.userMealTemplates ?? []
   );
-  if (presetMatch) {
-    return presetMatch;
+  if (userPresets.length > 0) {
+    const presetMatch = tryResolvePersonalPresetEntry(
+      params.rawText,
+      params.fallbackTimeSlot,
+      userPresets
+    );
+    if (presetMatch) {
+      return presetMatch;
+    }
   }
 
   const safeWeight =

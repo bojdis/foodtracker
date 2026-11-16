@@ -692,10 +692,60 @@ export function TrackerApp({
     }
   }
 
+  async function handleCreateTemplate(payload: {
+    canonical_name: string;
+    typical_time_slot: string;
+    avg_portion_grams: number | null;
+    avg_kcal: number;
+    avg_protein_g: number;
+    avg_carbs_g: number;
+    avg_fat_g: number;
+    avg_fiber_g: number;
+    shortcut_aliases: string[];
+  }): Promise<{ ok: boolean; error?: string }> {
+    setActionError(null);
+    const res = await safeFetchJson<{
+      ok?: boolean;
+      template?: MealTemplateRow;
+      error?: string;
+    }>("/api/templates", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...payload, is_quick_check: true }),
+    });
+
+    if (!res.ok || !res.data?.template) {
+      return {
+        ok: false,
+        error: res.errorMessage ?? "Oblíbené jídlo se nepodařilo uložit.",
+      };
+    }
+
+    const created = res.data.template;
+    setTemplates((prev) => [
+      created,
+      ...prev.filter((tpl) => tpl.id !== created.id),
+    ]);
+    showTemporaryFeedback(`Oblíbené jídlo „${created.canonical_name}“ přidáno.`);
+    return { ok: true };
+  }
+
   async function handlePatchTemplate(
     templateId: number,
-    patch: { is_quick_check?: boolean; is_hidden?: boolean }
-  ) {
+    patch: {
+      is_quick_check?: boolean;
+      is_hidden?: boolean;
+      canonical_name?: string;
+      typical_time_slot?: string;
+      avg_portion_grams?: number | null;
+      avg_kcal?: number;
+      avg_protein_g?: number;
+      avg_carbs_g?: number;
+      avg_fat_g?: number;
+      avg_fiber_g?: number;
+      shortcut_aliases?: string[];
+    }
+  ): Promise<{ ok: boolean; error?: string }> {
     setActionError(null);
     setPatchingTemplateId(templateId);
 
@@ -717,9 +767,10 @@ export function TrackerApp({
       });
 
       if (!res.ok) {
-        setActionError(res.errorMessage ?? "Úprava šablony se nezdařila.");
+        const msg = res.errorMessage ?? "Úprava šablony se nezdařila.";
+        setActionError(msg);
         await fetchDayData(selectedDate, { silent: true });
-        return;
+        return { ok: false, error: msg };
       }
 
       if (res.data?.template) {
@@ -730,6 +781,7 @@ export function TrackerApp({
             : prev.map((tpl) => (tpl.id === updated.id ? updated : tpl))
         );
       }
+      return { ok: true };
     } finally {
       setPatchingTemplateId(null);
     }
@@ -822,10 +874,58 @@ export function TrackerApp({
     }
   }
 
+  async function handleCreateActivityTemplate(payload: {
+    canonical_name: string;
+    icon_key: "bike" | "climb" | "gym" | "swim" | "walk" | "run" | "activity";
+    default_minutes: number;
+    default_intensity: ActivityIntensity;
+    met_light: number;
+    met_medium: number;
+    met_high: number;
+  }): Promise<{ ok: boolean; error?: string }> {
+    setActionError(null);
+    const res = await safeFetchJson<{
+      ok?: boolean;
+      activityTemplate?: ActivityTemplateRow;
+      error?: string;
+    }>("/api/activity-templates", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...payload, is_quick_check: true }),
+    });
+
+    if (!res.ok || !res.data?.activityTemplate) {
+      return {
+        ok: false,
+        error: res.errorMessage ?? "Oblíbenou aktivitu se nepodařilo uložit.",
+      };
+    }
+
+    const created = res.data.activityTemplate;
+    setActivityTemplates((prev) => [
+      created,
+      ...prev.filter((tpl) => tpl.id !== created.id),
+    ]);
+    showTemporaryFeedback(
+      `Oblíbená aktivita „${created.canonical_name}“ přidána.`
+    );
+    return { ok: true };
+  }
+
   async function handlePatchActivityTemplate(
     activityTemplateId: number,
-    patch: { is_quick_check?: boolean; is_hidden?: boolean }
-  ) {
+    patch: {
+      is_quick_check?: boolean;
+      is_hidden?: boolean;
+      canonical_name?: string;
+      icon_key?: "bike" | "climb" | "gym" | "swim" | "walk" | "run" | "activity";
+      default_minutes?: number;
+      default_intensity?: ActivityIntensity;
+      met_light?: number;
+      met_medium?: number;
+      met_high?: number;
+    }
+  ): Promise<{ ok: boolean; error?: string }> {
     setActionError(null);
     setPatchingActivityId(activityTemplateId);
 
@@ -849,11 +949,11 @@ export function TrackerApp({
       });
 
       if (!res.ok) {
-        setActionError(
-          res.errorMessage ?? "Úprava šablony aktivity se nezdařila."
-        );
+        const msg =
+          res.errorMessage ?? "Úprava šablony aktivity se nezdařila.";
+        setActionError(msg);
         await fetchDayData(selectedDate, { silent: true });
-        return;
+        return { ok: false, error: msg };
       }
 
       if (res.data?.activityTemplate) {
@@ -864,6 +964,7 @@ export function TrackerApp({
             : prev.map((tpl) => (tpl.id === updated.id ? updated : tpl))
         );
       }
+      return { ok: true };
     } finally {
       setPatchingActivityId(null);
     }
@@ -1165,6 +1266,7 @@ export function TrackerApp({
 
             {/* #2 RYCHLÝ ZÁPIS + INLINE MĚŘENÍ VÁHY/PASU */}
             <HeroCaptureCard
+              userId={userId}
               selectedDateLabel={`${dateHeader.primary} (${dateHeader.secondary})`}
               isToday={isToday}
               submitting={submitting}
@@ -1196,9 +1298,11 @@ export function TrackerApp({
               patchingActivityId={patchingActivityId}
               deletingActivityId={deletingActivityId}
               onQuickMealAction={handleQuickMealAction}
+              onCreateTemplate={handleCreateTemplate}
               onPatchTemplate={handlePatchTemplate}
               onDeleteTemplate={handleDeleteTemplate}
               onLogQuickActivity={handleLogQuickActivity}
+              onCreateActivityTemplate={handleCreateActivityTemplate}
               onPatchActivityTemplate={handlePatchActivityTemplate}
               onDeleteActivityTemplate={handleDeleteActivityTemplate}
             />

@@ -88,20 +88,20 @@ export function ProfileModal({
   const isOnboarding = initialProfile === null;
 
   const [displayName, setDisplayName] = useState(
-    initialProfile?.display_name ?? "Radek"
+    initialProfile?.display_name ?? ""
   );
   const [sex, setSex] = useState<Sex>(normalizeSex(initialProfile?.sex));
   const [energyUnit, setEnergyUnit] = useState<EnergyUnit>(
     normalizeEnergyUnit(initialProfile?.energy_unit)
   );
   const [birthYear, setBirthYear] = useState<string>(
-    String(initialProfile?.birth_year ?? 1977)
+    initialProfile?.birth_year != null ? String(initialProfile.birth_year) : ""
   );
   const [heightCm, setHeightCm] = useState<string>(
-    String(initialProfile?.height_cm ?? 191)
+    initialProfile?.height_cm != null ? String(initialProfile.height_cm) : ""
   );
   const [weightKg, setWeightKg] = useState<string>(
-    String(initialProfile?.weight_kg ?? 100)
+    initialProfile?.weight_kg != null ? String(initialProfile.weight_kg) : ""
   );
   const [targetWeightKg, setTargetWeightKg] = useState<string>(
     initialProfile?.target_weight_kg != null
@@ -278,6 +278,29 @@ export function ProfileModal({
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError(null);
+
+    const trimmedName = displayName.trim();
+    const parsedBirthYear = Number.parseInt(birthYear, 10);
+    const parsedHeightCm = Number.parseInt(heightCm, 10);
+    const parsedWeightKg = Number.parseFloat(weightKg.replace(",", "."));
+
+    if (!trimmedName) {
+      setError("Zadej prosím své jméno nebo přezdívku.");
+      return;
+    }
+    if (!Number.isFinite(parsedBirthYear) || parsedBirthYear < 1925 || parsedBirthYear > 2020) {
+      setError("Zadej prosím platný rok narození (1925–2020).");
+      return;
+    }
+    if (!Number.isFinite(parsedHeightCm) || parsedHeightCm < 120 || parsedHeightCm > 240) {
+      setError("Zadej prosím výšku v cm (120–240).");
+      return;
+    }
+    if (!Number.isFinite(parsedWeightKg) || parsedWeightKg < 35 || parsedWeightKg > 260) {
+      setError("Zadej prosím aktuální váhu v kg (35–260).");
+      return;
+    }
+
     setSaving(true);
 
     try {
@@ -292,12 +315,12 @@ export function ProfileModal({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          display_name: displayName.trim() || "Radek",
+          display_name: trimmedName,
           sex,
           energy_unit: energyUnit,
-          birth_year: Number.parseInt(birthYear, 10),
-          height_cm: Number.parseInt(heightCm, 10),
-          weight_kg: Number.parseFloat(weightKg.replace(",", ".")),
+          birth_year: parsedBirthYear,
+          height_cm: parsedHeightCm,
+          weight_kg: parsedWeightKg,
           target_weight_kg:
             parsedTargetWeight !== null && Number.isFinite(parsedTargetWeight)
               ? parsedTargetWeight
@@ -428,9 +451,10 @@ export function ProfileModal({
                 type="text"
                 required
                 maxLength={60}
+                placeholder="např. Jana"
                 value={displayName}
                 onChange={(e) => setDisplayName(e.target.value)}
-                className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-base font-medium text-slate-900 outline-none transition focus:border-emerald-500 focus:bg-white dark:border-slate-700/80 dark:bg-slate-950/60 dark:text-white"
+                className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-base font-medium text-slate-900 placeholder:font-normal placeholder:text-slate-400 outline-none transition focus:border-emerald-500 focus:bg-white dark:border-slate-700/80 dark:bg-slate-950/60 dark:text-white"
               />
             </div>
 
@@ -481,9 +505,10 @@ export function ProfileModal({
                 min={1925}
                 max={2020}
                 required
+                placeholder="1990"
                 value={birthYear}
                 onChange={(e) => setBirthYear(e.target.value)}
-                className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-base font-semibold text-slate-900 outline-none focus:border-emerald-500 focus:bg-white dark:border-slate-700/80 dark:bg-slate-950/60 dark:text-white"
+                className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-base font-semibold text-slate-900 placeholder:font-normal placeholder:text-slate-400 outline-none focus:border-emerald-500 focus:bg-white dark:border-slate-700/80 dark:bg-slate-950/60 dark:text-white"
               />
             </div>
 
@@ -501,9 +526,10 @@ export function ProfileModal({
                 min={120}
                 max={240}
                 required
+                placeholder="175"
                 value={heightCm}
                 onChange={(e) => setHeightCm(e.target.value)}
-                className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-base font-semibold text-slate-900 outline-none focus:border-emerald-500 focus:bg-white dark:border-slate-700/80 dark:bg-slate-950/60 dark:text-white"
+                className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-base font-semibold text-slate-900 placeholder:font-normal placeholder:text-slate-400 outline-none focus:border-emerald-500 focus:bg-white dark:border-slate-700/80 dark:bg-slate-950/60 dark:text-white"
               />
             </div>
 
@@ -522,9 +548,10 @@ export function ProfileModal({
                 min={35}
                 max={260}
                 required
+                placeholder="72"
                 value={weightKg}
                 onChange={(e) => setWeightKg(e.target.value)}
-                className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-base font-semibold text-slate-900 outline-none focus:border-emerald-500 focus:bg-white dark:border-slate-700/80 dark:bg-slate-950/60 dark:text-white"
+                className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-base font-semibold text-slate-900 placeholder:font-normal placeholder:text-slate-400 outline-none focus:border-emerald-500 focus:bg-white dark:border-slate-700/80 dark:bg-slate-950/60 dark:text-white"
               />
             </div>
 
@@ -542,7 +569,7 @@ export function ProfileModal({
                 step="0.5"
                 min={35}
                 max={260}
-                placeholder="např. 90"
+                placeholder="volitelné"
                 value={targetWeightKg}
                 onChange={(e) => setTargetWeightKg(e.target.value)}
                 className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-base font-semibold text-slate-900 placeholder:font-normal placeholder:text-slate-400 outline-none focus:border-emerald-500 focus:bg-white dark:border-slate-700/80 dark:bg-slate-950/60 dark:text-white"
@@ -925,7 +952,7 @@ export function ProfileModal({
           </button>
 
           <div className="flex items-center justify-between border-t border-slate-200/70 pt-3 text-xs text-slate-500 dark:border-slate-800 dark:text-slate-400">
-            <span className="truncate">{userEmail ?? "Přihlášený vlastník"}</span>
+            <span className="truncate">{userEmail ?? "Přihlášený uživatel"}</span>
             <button
               type="button"
               disabled={signingOut}

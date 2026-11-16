@@ -27,6 +27,7 @@ import { WaistMeasurementGuide } from "./WaistMeasurementGuide";
 import { compressImageFile, type CompressedImageResult } from "@/lib/image-utils";
 
 interface HeroCaptureCardProps {
+  userId: string;
   selectedDateLabel: string;
   isToday: boolean;
   submitting: boolean;
@@ -53,7 +54,7 @@ interface HeroCaptureCardProps {
   }) => Promise<boolean>;
 }
 
-const LAST_BP_STORAGE_KEY = "foodtracker_last_bp_v1";
+const LAST_BP_STORAGE_PREFIX = "foodtracker_last_bp_v2_";
 
 interface StoredBpValues {
   sys: number | null;
@@ -61,12 +62,12 @@ interface StoredBpValues {
   pulse: number | null;
 }
 
-function readStoredBp(): StoredBpValues {
+function readStoredBp(userId: string): StoredBpValues {
   if (typeof window === "undefined") {
     return { sys: null, dia: null, pulse: null };
   }
   try {
-    const raw = window.localStorage.getItem(LAST_BP_STORAGE_KEY);
+    const raw = window.localStorage.getItem(`${LAST_BP_STORAGE_PREFIX}${userId}`);
     if (!raw) return { sys: null, dia: null, pulse: null };
     const parsed = JSON.parse(raw) as Partial<StoredBpValues>;
     return {
@@ -79,10 +80,13 @@ function readStoredBp(): StoredBpValues {
   }
 }
 
-function writeStoredBp(values: StoredBpValues): void {
+function writeStoredBp(userId: string, values: StoredBpValues): void {
   if (typeof window === "undefined") return;
   try {
-    window.localStorage.setItem(LAST_BP_STORAGE_KEY, JSON.stringify(values));
+    window.localStorage.setItem(
+      `${LAST_BP_STORAGE_PREFIX}${userId}`,
+      JSON.stringify(values)
+    );
   } catch {
     // ignore storage quota errors
   }
@@ -97,6 +101,7 @@ function formatNumCs(val: number): string {
 }
 
 export function HeroCaptureCard({
+  userId,
   selectedDateLabel,
   isToday,
   submitting,
@@ -127,8 +132,8 @@ export function HeroCaptureCard({
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
-    setStoredBp(readStoredBp());
-  }, []);
+    setStoredBp(readStoredBp(userId));
+  }, [userId]);
 
   const effectiveLastBpSys = lastKnownBpSys ?? storedBp.sys;
   const effectiveLastBpDia = lastKnownBpDia ?? storedBp.dia;
@@ -209,9 +214,10 @@ export function HeroCaptureCard({
         pulse: dayMeasurement.pulse_bpm ?? effectiveLastPulseBpm ?? null,
       };
       setStoredBp(nextStored);
-      writeStoredBp(nextStored);
+      writeStoredBp(userId, nextStored);
     }
   }, [
+    userId,
     dayMeasurement?.id,
     dayMeasurement?.weight_kg,
     dayMeasurement?.waist_cm,
@@ -430,7 +436,7 @@ export function HeroCaptureCard({
           pulse: parsedPulseVal ?? effectiveLastPulseBpm ?? null,
         };
         setStoredBp(nextStored);
-        writeStoredBp(nextStored);
+        writeStoredBp(userId, nextStored);
       }
     } finally {
       setSavingSection(null);

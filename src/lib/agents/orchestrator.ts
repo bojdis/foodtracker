@@ -56,11 +56,20 @@ export async function processLogEntryInBackground(params: {
     logDate = entry.log_date;
     userId = entry.user_id;
 
-    const { data: profile } = await supabase
-      .from("user_profiles")
-      .select("weight_kg, bmr_kcal")
-      .eq("user_id", entry.user_id)
-      .maybeSingle();
+    const [{ data: profile }, templatesRes] = await Promise.all([
+      supabase
+        .from("user_profiles")
+        .select("weight_kg, bmr_kcal")
+        .eq("user_id", entry.user_id)
+        .maybeSingle(),
+      supabase
+        .from("meal_templates")
+        .select("*")
+        .eq("user_id", entry.user_id)
+        .eq("is_hidden", false),
+    ]);
+
+    const userMealTemplates = templatesRes?.data ?? [];
 
     const rawWeight = Number(profile?.weight_kg);
     const userWeightKg =
@@ -86,6 +95,7 @@ export async function processLogEntryInBackground(params: {
       userWeightKg,
       userBmrKcal,
       fallbackTimeSlot,
+      userMealTemplates,
     });
 
     let measurementSaved = false;

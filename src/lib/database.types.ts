@@ -410,7 +410,6 @@ export type Database = {
           height_cm: number
           protein_target_g: number
           sex: string
-          singleton_lock: boolean
           target_deficit_kcal: number
           target_weight_kg: number | null
           updated_at: string
@@ -432,7 +431,6 @@ export type Database = {
           height_cm: number
           protein_target_g?: number
           sex?: string
-          singleton_lock?: boolean
           target_deficit_kcal?: number
           target_weight_kg?: number | null
           updated_at?: string
@@ -454,7 +452,6 @@ export type Database = {
           height_cm?: number
           protein_target_g?: number
           sex?: string
-          singleton_lock?: boolean
           target_deficit_kcal?: number
           target_weight_kg?: number | null
           updated_at?: string
@@ -469,7 +466,6 @@ export type Database = {
     }
     Functions: {
       is_owner_user: { Args: never; Returns: boolean }
-      is_tracker_initialized: { Args: never; Returns: boolean }
       match_meal_templates: {
         Args: {
           match_count?: number

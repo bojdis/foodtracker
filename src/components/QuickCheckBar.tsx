@@ -11,6 +11,7 @@ import {
   Loader2,
   Minus,
   Mountain,
+  Pencil,
   Pin,
   PinOff,
   Plus,
@@ -32,7 +33,10 @@ import type {
 } from "@/lib/types";
 import {
   calculateActivityBurnedKcal,
+  convertFromKcal,
+  convertToKcal,
   detectTimeSlotForDate,
+  energyUnitLabel,
   formatEnergy,
   TIME_SLOT_LABELS_CS,
 } from "@/lib/calculations";
@@ -40,6 +44,37 @@ import {
   computeActivityTemplateDayMinutes,
   computeMealTemplateDayCounts,
 } from "@/lib/template-counter";
+
+type ActivityIconKey =
+  | "bike"
+  | "climb"
+  | "gym"
+  | "swim"
+  | "walk"
+  | "run"
+  | "activity";
+
+interface MealTemplatePayload {
+  canonical_name: string;
+  typical_time_slot: TimeSlot;
+  avg_portion_grams: number | null;
+  avg_kcal: number;
+  avg_protein_g: number;
+  avg_carbs_g: number;
+  avg_fat_g: number;
+  avg_fiber_g: number;
+  shortcut_aliases: string[];
+}
+
+interface ActivityTemplatePayload {
+  canonical_name: string;
+  icon_key: ActivityIconKey;
+  default_minutes: number;
+  default_intensity: ActivityIntensity;
+  met_light: number;
+  met_medium: number;
+  met_high: number;
+}
 
 interface QuickCheckBarProps {
   templates: MealTemplateRow[];
@@ -57,20 +92,26 @@ interface QuickCheckBarProps {
     template: MealTemplateRow,
     action: "add" | "remove_one"
   ) => void;
+  onCreateTemplate: (
+    payload: MealTemplatePayload
+  ) => Promise<{ ok: boolean; error?: string }>;
   onPatchTemplate: (
     templateId: number,
-    patch: { is_quick_check?: boolean; is_hidden?: boolean }
-  ) => void;
+    patch: { is_quick_check?: boolean; is_hidden?: boolean } & Partial<MealTemplatePayload>
+  ) => Promise<{ ok: boolean; error?: string }>;
   onDeleteTemplate: (templateId: number) => void;
   onLogQuickActivity: (payload: {
     activity_template_id: number;
     duration_minutes: number;
     intensity: ActivityIntensity;
   }) => Promise<boolean>;
+  onCreateActivityTemplate: (
+    payload: ActivityTemplatePayload
+  ) => Promise<{ ok: boolean; error?: string }>;
   onPatchActivityTemplate: (
     activityTemplateId: number,
-    patch: { is_quick_check?: boolean; is_hidden?: boolean }
-  ) => void;
+    patch: { is_quick_check?: boolean; is_hidden?: boolean } & Partial<ActivityTemplatePayload>
+  ) => Promise<{ ok: boolean; error?: string }>;
   onDeleteActivityTemplate: (activityTemplateId: number) => void;
 }
 
@@ -139,6 +180,33 @@ const INTENSITY_OPTIONS: Array<{
   { value: "high", label: "Ostrá", hint: "naplno / kopce" },
 ];
 
+const SPORT_QUICK_PRESETS: Array<{
+  label: string;
+  icon_key: ActivityIconKey;
+  default_minutes: number;
+  met_light: number;
+  met_medium: number;
+  met_high: number;
+}> = [
+  { label: "Běh", icon_key: "run", default_minutes: 40, met_light: 6.5, met_medium: 8.5, met_high: 10.5 },
+  { label: "Kolo", icon_key: "bike", default_minutes: 75, met_light: 5.0, met_medium: 6.5, met_high: 8.2 },
+  { label: "Chůze", icon_key: "walk", default_minutes: 45, met_light: 2.8, met_medium: 3.6, met_high: 4.8 },
+  { label: "Posilovna", icon_key: "gym", default_minutes: 60, met_light: 3.4, met_medium: 4.5, met_high: 5.8 },
+  { label: "Bazén", icon_key: "swim", default_minutes: 45, met_light: 4.8, met_medium: 6.5, met_high: 8.5 },
+  { label: "Lezení", icon_key: "climb", default_minutes: 75, met_light: 4.2, met_medium: 5.6, met_high: 7.0 },
+  { label: "Jóga", icon_key: "activity", default_minutes: 45, met_light: 2.2, met_medium: 2.8, met_high: 3.8 },
+];
+
+const ICON_OPTIONS: Array<{ value: ActivityIconKey; label: string }> = [
+  { value: "run", label: "Běh" },
+  { value: "bike", label: "Kolo" },
+  { value: "walk", label: "Chůze" },
+  { value: "gym", label: "Síla" },
+  { value: "swim", label: "Plavání" },
+  { value: "climb", label: "Lezení" },
+  { value: "activity", label: "Ostatní" },
+];
+
 export function QuickCheckBar({
   templates,
   activityTemplates,
@@ -152,14 +220,41 @@ export function QuickCheckBar({
   patchingActivityId,
   deletingActivityId,
   onQuickMealAction,
+  onCreateTemplate,
   onPatchTemplate,
   onDeleteTemplate,
   onLogQuickActivity,
+  onCreateActivityTemplate,
   onPatchActivityTemplate,
   onDeleteActivityTemplate,
 }: QuickCheckBarProps) {
   const [showHabitsDrawer, setShowHabitsDrawer] = useState(false);
   const [manageMode, setManageMode] = useState(false);
+
+  // Add / Edit favorite modal state
+  const [editorMode, setEditorMode] = useState<"closed" | "meal" | "activity">("closed");
+  const [editingMealId, setEditingMealId] = useState<number | null>(null);
+  const [editingActivityId, setEditingActivityId] = useState<number | null>(null);
+  const [editorSaving, setEditorSaving] = useState(false);
+  const [editorError, setEditorError] = useState<string | null>(null);
+
+  // Meal editor fields
+  const [mealName, setMealName] = useState("");
+  const [mealEnergyInput, setMealEnergyInput] = useState("");
+  const [mealPortionInput, setMealPortionInput] = useState("");
+  const [mealProteinInput, setMealProteinInput] = useState("");
+  const [mealCarbsInput, setMealCarbsInput] = useState("");
+  const [mealFatInput, setMealFatInput] = useState("");
+  const [mealFiberInput, setMealFiberInput] = useState("");
+  const [mealAliasesInput, setMealAliasesInput] = useState("");
+  const [mealSlot, setMealSlot] = useState<TimeSlot>("anytime");
+
+  // Activity editor fields
+  const [actName, setActName] = useState("");
+  const [actIcon, setActIcon] = useState<ActivityIconKey>("activity");
+  const [actMinutes, setActMinutes] = useState("45");
+  const [actIntensity, setActIntensity] = useState<ActivityIntensity>("medium");
+  const [actMetMedium, setActMetMedium] = useState("5.0");
 
   // Active expanded sport tuner state
   const [selectedSportId, setSelectedSportId] = useState<number | null>(null);
@@ -230,13 +325,181 @@ export function QuickCheckBar({
   );
 
   const totalCandidatesCount = learningMeals.length + learningActivities.length;
+  const isEditingExisting = editingMealId !== null || editingActivityId !== null;
+  const unitStr = energyUnitLabel(energyUnit);
 
-  if (
-    quickCheckMeals.length === 0 &&
-    quickActivities.length === 0 &&
-    totalCandidatesCount === 0
-  ) {
-    return null;
+  function closeEditor() {
+    setEditorMode("closed");
+    setEditingMealId(null);
+    setEditingActivityId(null);
+    setEditorError(null);
+  }
+
+  function openCreateEditor(mode: "meal" | "activity") {
+    setSelectedSportId(null);
+    setEditingMealId(null);
+    setEditingActivityId(null);
+    setEditorError(null);
+    setMealName("");
+    setMealEnergyInput("");
+    setMealPortionInput("");
+    setMealProteinInput("");
+    setMealCarbsInput("");
+    setMealFatInput("");
+    setMealFiberInput("");
+    setMealAliasesInput("");
+    setMealSlot("anytime");
+    setActName("");
+    setActIcon("activity");
+    setActMinutes("45");
+    setActIntensity("medium");
+    setActMetMedium("5.0");
+    setEditorMode(mode);
+  }
+
+  function openEditMeal(tpl: MealTemplateRow) {
+    setSelectedSportId(null);
+    setEditingActivityId(null);
+    setEditingMealId(tpl.id);
+    setEditorError(null);
+    setMealName(tpl.canonical_name);
+    setMealEnergyInput(String(convertFromKcal(Math.round(tpl.avg_kcal), energyUnit)));
+    setMealPortionInput(tpl.avg_portion_grams != null ? String(tpl.avg_portion_grams) : "");
+    setMealProteinInput(tpl.avg_protein_g ? String(tpl.avg_protein_g) : "");
+    setMealCarbsInput(tpl.avg_carbs_g ? String(tpl.avg_carbs_g) : "");
+    setMealFatInput(tpl.avg_fat_g ? String(tpl.avg_fat_g) : "");
+    setMealFiberInput(tpl.avg_fiber_g ? String(tpl.avg_fiber_g) : "");
+    setMealAliasesInput(
+      Array.isArray(tpl.shortcut_aliases) ? tpl.shortcut_aliases.join(", ") : ""
+    );
+    setMealSlot(toTimeSlot(tpl.typical_time_slot));
+    setEditorMode("meal");
+  }
+
+  function openEditActivity(act: ActivityTemplateRow) {
+    setSelectedSportId(null);
+    setEditingMealId(null);
+    setEditingActivityId(act.id);
+    setEditorError(null);
+    setActName(act.canonical_name);
+    const validIcon: ActivityIconKey =
+      act.icon_key === "bike" ||
+      act.icon_key === "climb" ||
+      act.icon_key === "gym" ||
+      act.icon_key === "swim" ||
+      act.icon_key === "walk" ||
+      act.icon_key === "run"
+        ? act.icon_key
+        : "activity";
+    setActIcon(validIcon);
+    setActMinutes(String(act.default_minutes));
+    setActIntensity(toIntensity(act.default_intensity));
+    setActMetMedium(String(act.met_medium));
+    setEditorMode("activity");
+  }
+
+  async function handleSaveMealEditor() {
+    setEditorError(null);
+    const name = mealName.trim();
+    if (!name) {
+      setEditorError("Zadej název oblíbeného jídla.");
+      return;
+    }
+    const rawEnergy = Number.parseFloat(mealEnergyInput.replace(",", "."));
+    if (!Number.isFinite(rawEnergy) || rawEnergy < 0) {
+      setEditorError(`Zadej platnou energii v ${unitStr}.`);
+      return;
+    }
+    const kcal = Math.max(0, Math.round(convertToKcal(rawEnergy, energyUnit)));
+    const portionRaw = mealPortionInput.trim()
+      ? Number.parseInt(mealPortionInput, 10)
+      : null;
+    const parseMacro = (val: string) => {
+      if (!val.trim()) return 0;
+      const num = Number.parseFloat(val.replace(",", "."));
+      return Number.isFinite(num) && num >= 0 ? Math.round(num * 10) / 10 : 0;
+    };
+    const aliases = mealAliasesInput
+      .split(",")
+      .map((s) => s.trim())
+      .filter((s) => s.length >= 2);
+
+    const payload: MealTemplatePayload = {
+      canonical_name: name,
+      typical_time_slot: mealSlot,
+      avg_portion_grams:
+        portionRaw !== null && Number.isFinite(portionRaw) && portionRaw > 0
+          ? portionRaw
+          : null,
+      avg_kcal: kcal,
+      avg_protein_g: parseMacro(mealProteinInput),
+      avg_carbs_g: parseMacro(mealCarbsInput),
+      avg_fat_g: parseMacro(mealFatInput),
+      avg_fiber_g: parseMacro(mealFiberInput),
+      shortcut_aliases: aliases,
+    };
+
+    setEditorSaving(true);
+    try {
+      const res =
+        editingMealId !== null
+          ? await onPatchTemplate(editingMealId, payload)
+          : await onCreateTemplate(payload);
+      if (!res.ok) {
+        setEditorError(res.error ?? "Uložení se nezdařilo.");
+        return;
+      }
+      closeEditor();
+    } finally {
+      setEditorSaving(false);
+    }
+  }
+
+  async function handleSaveActivityEditor() {
+    setEditorError(null);
+    const name = actName.trim();
+    if (!name) {
+      setEditorError("Zadej název aktivity.");
+      return;
+    }
+    const minutes = Number.parseInt(actMinutes, 10);
+    if (!Number.isFinite(minutes) || minutes < 10 || minutes > 360) {
+      setEditorError("Zadej výchozí délku v minutách (10–360).");
+      return;
+    }
+    const metMed = Number.parseFloat(actMetMedium.replace(",", "."));
+    if (!Number.isFinite(metMed) || metMed < 1.5 || metMed > 18) {
+      setEditorError("Zadej platnou hodnotu MET (1,5–18).");
+      return;
+    }
+
+    const metLight = Math.max(1.5, Math.round(metMed * 0.78 * 10) / 10);
+    const metHigh = Math.min(18, Math.round(metMed * 1.25 * 10) / 10);
+
+    const payload: ActivityTemplatePayload = {
+      canonical_name: name,
+      icon_key: actIcon,
+      default_minutes: minutes,
+      default_intensity: actIntensity,
+      met_light: metLight,
+      met_medium: Math.round(metMed * 10) / 10,
+      met_high: metHigh,
+    };
+
+    setEditorSaving(true);
+    try {
+      const res =
+        editingActivityId !== null
+          ? await onPatchActivityTemplate(editingActivityId, payload)
+          : await onCreateActivityTemplate(payload);
+      if (!res.ok) {
+        setEditorError(res.error ?? "Uložení se nezdařilo.");
+        return;
+      }
+      closeEditor();
+    } finally {
+      setEditorSaving(false);
+    }
   }
 
   function handleSelectSport(act: ActivityTemplateRow) {
@@ -249,7 +512,7 @@ export function QuickCheckBar({
     setSportIntensity(toIntensity(act.default_intensity));
   }
 
-  const userWeightKg = profile?.weight_kg ?? 100;
+  const userWeightKg = profile?.weight_kg ?? 75;
   const userBmrKcal = profile?.bmr_kcal ?? undefined;
 
   const selectedMet = selectedSport
@@ -308,6 +571,27 @@ export function QuickCheckBar({
         </div>
 
         <div className="flex shrink-0 items-center gap-1">
+          <button
+            type="button"
+            onClick={() =>
+              editorMode === "closed"
+                ? openCreateEditor("meal")
+                : closeEditor()
+            }
+            className={`inline-flex items-center gap-1 rounded-xl px-2 py-0.5 text-[11px] font-semibold transition ${
+              editorMode !== "closed" && !isEditingExisting
+                ? "bg-emerald-500 text-white shadow-xs"
+                : "text-emerald-700 hover:bg-emerald-500/10 dark:text-emerald-300 dark:hover:bg-emerald-500/15"
+            }`}
+          >
+            {editorMode !== "closed" && !isEditingExisting ? (
+              <X className="h-3 w-3" />
+            ) : (
+              <Plus className="h-3 w-3" />
+            )}
+            <span>Přidat</span>
+          </button>
+
           {totalCandidatesCount > 0 && (
             <button
               type="button"
@@ -341,6 +625,395 @@ export function QuickCheckBar({
           )}
         </div>
       </div>
+
+      {/* Empty state for new users with no pinned favorites yet */}
+      {quickCheckMeals.length === 0 &&
+        quickActivities.length === 0 &&
+        editorMode === "closed" && (
+          <div className="mt-2 flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-dashed border-slate-200 bg-slate-50/70 px-3 py-2 text-xs text-slate-600 dark:border-slate-800 dark:bg-slate-950/40 dark:text-slate-400">
+            <span>
+              Zatím tu nemáš žádné oblíbené položky. Po 3× zapsání se naučí
+              samy, nebo si přidej vlastní jídlo či sport.
+            </span>
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => openCreateEditor("meal")}
+                className="inline-flex items-center gap-1 rounded-xl bg-emerald-500/15 px-2.5 py-1 text-[11px] font-bold text-emerald-700 transition hover:bg-emerald-500/25 dark:text-emerald-300"
+              >
+                <Plus className="h-3 w-3" />
+                Oblíbené jídlo
+              </button>
+              <button
+                type="button"
+                onClick={() => openCreateEditor("activity")}
+                className="inline-flex items-center gap-1 rounded-xl bg-amber-500/15 px-2.5 py-1 text-[11px] font-bold text-amber-700 transition hover:bg-amber-500/25 dark:text-amber-300"
+              >
+                <Plus className="h-3 w-3" />
+                Oblíbený sport
+              </button>
+            </div>
+          </div>
+        )}
+
+      {/* Add / Edit Favorite Meal or Activity Panel */}
+      {editorMode !== "closed" && (
+        <div className="mt-2.5 rounded-2xl border border-emerald-500/30 bg-slate-50/90 p-3 dark:border-emerald-500/25 dark:bg-slate-950/60">
+          <div className="mb-2.5 flex items-center justify-between gap-2">
+            {!isEditingExisting ? (
+              <div className="grid grid-cols-2 gap-1 rounded-xl bg-slate-200/80 p-0.5 dark:bg-slate-800">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditorError(null);
+                    setEditorMode("meal");
+                  }}
+                  className={`inline-flex items-center gap-1 rounded-lg px-3 py-1 text-xs font-bold transition ${
+                    editorMode === "meal"
+                      ? "bg-white text-emerald-700 shadow-xs dark:bg-slate-950 dark:text-emerald-300"
+                      : "text-slate-600 dark:text-slate-400"
+                  }`}
+                >
+                  <Utensils className="h-3 w-3" />
+                  Jídlo / zkratka
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditorError(null);
+                    setEditorMode("activity");
+                  }}
+                  className={`inline-flex items-center gap-1 rounded-lg px-3 py-1 text-xs font-bold transition ${
+                    editorMode === "activity"
+                      ? "bg-white text-amber-700 shadow-xs dark:bg-slate-950 dark:text-amber-300"
+                      : "text-slate-600 dark:text-slate-400"
+                  }`}
+                >
+                  <Flame className="h-3 w-3" />
+                  Aktivita / sport
+                </button>
+              </div>
+            ) : (
+              <span className="text-xs font-bold text-slate-800 dark:text-slate-200">
+                {editorMode === "meal"
+                  ? "Upravit oblíbené jídlo"
+                  : "Upravit oblíbenou aktivitu"}
+              </span>
+            )}
+
+            <button
+              type="button"
+              onClick={closeEditor}
+              aria-label="Zavřít formulář"
+              className="rounded-lg p-1 text-slate-400 hover:bg-slate-200/70 hover:text-slate-700 dark:hover:bg-slate-800"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+
+          {editorError && (
+            <div className="mb-2.5 rounded-xl border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-700 dark:text-rose-200">
+              {editorError}
+            </div>
+          )}
+
+          {editorMode === "meal" ? (
+            <div className="space-y-2.5">
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                <div className="sm:col-span-2">
+                  <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                    Název jídla
+                  </label>
+                  <input
+                    type="text"
+                    maxLength={80}
+                    placeholder="např. Ranní káva s mlékem"
+                    value={mealName}
+                    onChange={(e) => setMealName(e.target.value)}
+                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-900 outline-none focus:border-emerald-500 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                    Energie ({unitStr})
+                  </label>
+                  <input
+                    type="number"
+                    inputMode="numeric"
+                    min={0}
+                    placeholder={energyUnit === "kj" ? "450" : "110"}
+                    value={mealEnergyInput}
+                    onChange={(e) => setMealEnergyInput(e.target.value)}
+                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-900 outline-none focus:border-emerald-500 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-5 gap-1.5">
+                <div>
+                  <label className="mb-1 block text-[10px] font-semibold text-slate-500">
+                    Porce (g)
+                  </label>
+                  <input
+                    type="number"
+                    inputMode="numeric"
+                    min={1}
+                    placeholder="200"
+                    value={mealPortionInput}
+                    onChange={(e) => setMealPortionInput(e.target.value)}
+                    className="w-full rounded-xl border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-900 outline-none focus:border-emerald-500 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-[10px] font-semibold text-slate-500">
+                    Bílk. (g)
+                  </label>
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    step="0.1"
+                    min={0}
+                    placeholder="0"
+                    value={mealProteinInput}
+                    onChange={(e) => setMealProteinInput(e.target.value)}
+                    className="w-full rounded-xl border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-900 outline-none focus:border-emerald-500 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-[10px] font-semibold text-slate-500">
+                    Sach. (g)
+                  </label>
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    step="0.1"
+                    min={0}
+                    placeholder="0"
+                    value={mealCarbsInput}
+                    onChange={(e) => setMealCarbsInput(e.target.value)}
+                    className="w-full rounded-xl border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-900 outline-none focus:border-emerald-500 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-[10px] font-semibold text-slate-500">
+                    Tuky (g)
+                  </label>
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    step="0.1"
+                    min={0}
+                    placeholder="0"
+                    value={mealFatInput}
+                    onChange={(e) => setMealFatInput(e.target.value)}
+                    className="w-full rounded-xl border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-900 outline-none focus:border-emerald-500 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-[10px] font-semibold text-slate-500">
+                    Vlák. (g)
+                  </label>
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    step="0.1"
+                    min={0}
+                    placeholder="0"
+                    value={mealFiberInput}
+                    onChange={(e) => setMealFiberInput(e.target.value)}
+                    className="w-full rounded-xl border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-900 outline-none focus:border-emerald-500 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                <div className="sm:col-span-2">
+                  <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                    Textové zkratky (oddělené čárkou)
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="např. kafe, moje káva, latté"
+                    value={mealAliasesInput}
+                    onChange={(e) => setMealAliasesInput(e.target.value)}
+                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-900 outline-none focus:border-emerald-500 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                    Část dne
+                  </label>
+                  <select
+                    value={mealSlot}
+                    onChange={(e) => setMealSlot(toTimeSlot(e.target.value))}
+                    className="w-full rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-900 outline-none focus:border-emerald-500 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
+                  >
+                    <option value="anytime">Kdykoli</option>
+                    <option value="morning">Ráno</option>
+                    <option value="lunch">Oběd</option>
+                    <option value="snack">Svačina</option>
+                    <option value="evening">Večeře</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={closeEditor}
+                  className="rounded-xl px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-200/60 dark:text-slate-300 dark:hover:bg-slate-800"
+                >
+                  Zrušit
+                </button>
+                <button
+                  type="button"
+                  disabled={editorSaving}
+                  onClick={() => void handleSaveMealEditor()}
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-500 px-3.5 py-1.5 text-xs font-bold text-white shadow-xs hover:bg-emerald-600 disabled:opacity-60"
+                >
+                  {editorSaving && <Loader2 className="h-3 w-3 animate-spin" />}
+                  {editingMealId !== null ? "Uložit změny" : "Přidat jídlo"}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-2.5">
+              {editingActivityId === null && (
+                <div>
+                  <span className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                    Rychlé předvolby sportů
+                  </span>
+                  <div className="flex flex-wrap gap-1.5">
+                    {SPORT_QUICK_PRESETS.map((preset) => (
+                      <button
+                        key={preset.label}
+                        type="button"
+                        onClick={() => {
+                          setActName(preset.label);
+                          setActIcon(preset.icon_key);
+                          setActMinutes(String(preset.default_minutes));
+                          setActMetMedium(String(preset.met_medium));
+                        }}
+                        className={`inline-flex items-center gap-1 rounded-xl border px-2 py-1 text-[11px] font-semibold transition ${
+                          actName === preset.label
+                            ? "border-amber-500 bg-amber-500/15 text-amber-800 dark:text-amber-200"
+                            : "border-slate-200 bg-white text-slate-700 hover:border-amber-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300"
+                        }`}
+                      >
+                        {renderActivityIcon(preset.icon_key, "h-3 w-3")}
+                        <span>{preset.label}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                <div className="sm:col-span-2">
+                  <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                    Název aktivity
+                  </label>
+                  <input
+                    type="text"
+                    maxLength={48}
+                    placeholder="např. Běh, Tenis, Jóga"
+                    value={actName}
+                    onChange={(e) => setActName(e.target.value)}
+                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-900 outline-none focus:border-amber-500 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                    Ikona
+                  </label>
+                  <select
+                    value={actIcon}
+                    onChange={(e) =>
+                      setActIcon(e.target.value as ActivityIconKey)
+                    }
+                    className="w-full rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-900 outline-none focus:border-amber-500 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
+                  >
+                    {ICON_OPTIONS.map((opt) => (
+                      <option key={opt.value} value={opt.value}>
+                        {opt.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-2">
+                <div>
+                  <label className="mb-1 block text-[10px] font-semibold text-slate-500">
+                    Výchozí minuty
+                  </label>
+                  <input
+                    type="number"
+                    inputMode="numeric"
+                    min={10}
+                    max={360}
+                    value={actMinutes}
+                    onChange={(e) => setActMinutes(e.target.value)}
+                    className="w-full rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-900 outline-none focus:border-amber-500 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-[10px] font-semibold text-slate-500">
+                    Intenzita
+                  </label>
+                  <select
+                    value={actIntensity}
+                    onChange={(e) =>
+                      setActIntensity(toIntensity(e.target.value))
+                    }
+                    className="w-full rounded-xl border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-900 outline-none focus:border-amber-500 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
+                  >
+                    <option value="light">Lehká</option>
+                    <option value="medium">Střední</option>
+                    <option value="high">Ostrá</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="mb-1 block text-[10px] font-semibold text-slate-500">
+                    Střední MET
+                  </label>
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    step="0.5"
+                    min={1.5}
+                    max={18}
+                    value={actMetMedium}
+                    onChange={(e) => setActMetMedium(e.target.value)}
+                    className="w-full rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-900 outline-none focus:border-amber-500 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
+                  />
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={closeEditor}
+                  className="rounded-xl px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-200/60 dark:text-slate-300 dark:hover:bg-slate-800"
+                >
+                  Zrušit
+                </button>
+                <button
+                  type="button"
+                  disabled={editorSaving}
+                  onClick={() => void handleSaveActivityEditor()}
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-amber-500 px-3.5 py-1.5 text-xs font-bold text-white shadow-xs hover:bg-amber-600 disabled:opacity-60"
+                >
+                  {editorSaving && <Loader2 className="h-3 w-3 animate-spin" />}
+                  {editingActivityId !== null
+                    ? "Uložit změny"
+                    : "Přidat aktivitu"}
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* 1. Single-Row Flowing +1 Meal Pills (No Bingo Checkboxes!) */}
       {quickCheckMeals.length > 0 && (
@@ -425,15 +1098,24 @@ export function QuickCheckBar({
                   </button>
                 )}
 
-                {/* Manage Mode Controls: Unpin or Permanently Delete */}
+                {/* Manage Mode Controls: Edit, Unpin, or Permanently Delete */}
                 {manageMode && (
                   <div className="flex items-center gap-0.5 border-l border-slate-200/80 px-1.5 py-1 dark:border-slate-800">
                     <button
                       type="button"
                       disabled={isPatching || isDeleting}
+                      title="Upravit název, hodnoty nebo zkratky"
+                      onClick={() => openEditMeal(tpl)}
+                      className="rounded-lg p-1 text-slate-400 transition hover:bg-slate-200/70 hover:text-emerald-600 dark:hover:bg-slate-800 dark:hover:text-emerald-300"
+                    >
+                      <Pencil className="h-3 w-3" />
+                    </button>
+                    <button
+                      type="button"
+                      disabled={isPatching || isDeleting}
                       title="Odepnout z rychlého výběru"
                       onClick={() =>
-                        onPatchTemplate(tpl.id, { is_quick_check: false })
+                        void onPatchTemplate(tpl.id, { is_quick_check: false })
                       }
                       className="rounded-lg p-1 text-slate-400 transition hover:bg-slate-200/70 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200"
                     >
@@ -537,9 +1219,18 @@ export function QuickCheckBar({
                       <button
                         type="button"
                         disabled={isPatching || isDeleting}
+                        title="Upravit název, ikonu nebo MET"
+                        onClick={() => openEditActivity(act)}
+                        className="rounded-lg p-1 text-slate-400 transition hover:bg-slate-200/70 hover:text-amber-600 dark:hover:bg-slate-800 dark:hover:text-amber-300"
+                      >
+                        <Pencil className="h-3 w-3" />
+                      </button>
+                      <button
+                        type="button"
+                        disabled={isPatching || isDeleting}
                         title="Odepnout aktivitu z rychlého výběru"
                         onClick={() =>
-                          onPatchActivityTemplate(act.id, {
+                          void onPatchActivityTemplate(act.id, {
                             is_quick_check: false,
                           })
                         }

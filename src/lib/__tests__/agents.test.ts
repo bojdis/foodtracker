@@ -642,6 +642,15 @@ describe("orchestrator background processing", () => {
             }),
           };
         }
+        if (table === "meal_templates") {
+          return {
+            select: () => ({
+              eq: () => ({
+                eq: async () => ({ data: [], error: null }),
+              }),
+            }),
+          };
+        }
         if (table === "entry_items") {
           return {
             delete: () => ({

@@ -143,7 +143,7 @@ export function AuthScreen({ initialError }: AuthScreenProps) {
           </div>
           <div className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/25 bg-emerald-500/10 px-3 py-1 text-xs font-medium text-emerald-700 dark:text-emerald-300">
             <Sparkles className="h-3.5 w-3.5" />
-            Soukromý jednouživatelský tracker
+            Chytrý výživový a pohybový deník
           </div>
           <h1 className="mt-3 text-2xl font-bold tracking-tight text-slate-900 dark:text-white">
             FoodTracker
@@ -200,7 +200,7 @@ export function AuthScreen({ initialError }: AuthScreenProps) {
                     : "text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200"
                 }`}
               >
-                První registrace
+                Registrace
               </button>
             </div>
           )}
@@ -236,7 +236,7 @@ export function AuthScreen({ initialError }: AuthScreenProps) {
                   required
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  placeholder="radek@example.com"
+                  placeholder="tvuj@email.cz"
                   className="w-full rounded-2xl border border-slate-200 bg-slate-50 py-3 pl-10 pr-4 text-base text-slate-900 outline-none transition focus:border-emerald-500 focus:bg-white focus:ring-2 focus:ring-emerald-500/20 dark:border-slate-700/80 dark:bg-slate-950/60 dark:text-white dark:focus:border-emerald-400"
                 />
               </div>
@@ -293,7 +293,7 @@ export function AuthScreen({ initialError }: AuthScreenProps) {
               {mode === "signin"
                 ? "Přihlásit se"
                 : mode === "signup"
-                  ? "Vytvořit účet vlastníka"
+                  ? "Vytvořit účet"
                   : "Odeslat odkaz pro obnovu"}
             </button>
           </form>
@@ -309,8 +309,8 @@ export function AuthScreen({ initialError }: AuthScreenProps) {
 
           {mode === "signup" && (
             <p className="mt-4 text-center text-xs leading-relaxed text-slate-500 dark:text-slate-400">
-              Aplikace je chráněna databázovým zámkem pro jediného vlastníka. Po
-              uložení tvého profilu se přístup uzamkne pouze pro tvůj účet.
+              Každý účet má vlastní soukromý deník, nastavení BMR i svoje
+              oblíbená jídla a aktivity.
             </p>
           )}
         </div>

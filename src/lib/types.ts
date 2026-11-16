@@ -34,7 +34,11 @@ export interface TemplateItemSnapshot {
 }
 
 export const ProfileInputSchema = z.object({
-  display_name: z.string().trim().min(1).max(60).default("Radek"),
+  display_name: z
+    .string()
+    .trim()
+    .min(1, "Zadej prosím své jméno nebo přezdívku.")
+    .max(60),
   sex: z.enum(["male", "female"]),
   birth_year: z.coerce.number().int().min(1925).max(2020),
   height_cm: z.coerce.number().int().min(120).max(240),
@@ -75,6 +79,44 @@ export const QuickActivityLogSchema = z.object({
   log_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   duration_minutes: z.coerce.number().int().min(5).max(600),
   intensity: z.enum(["light", "medium", "high"]),
+});
+
+export const CreateMealTemplateSchema = z.object({
+  canonical_name: z
+    .string()
+    .trim()
+    .min(1, "Zadej název oblíbeného jídla.")
+    .max(80),
+  typical_time_slot: z
+    .enum(["morning", "lunch", "snack", "evening", "anytime"])
+    .default("anytime"),
+  avg_portion_grams: z.coerce.number().int().min(1).max(5000).nullable().optional(),
+  avg_kcal: z.coerce.number().int().min(0).max(10000),
+  avg_protein_g: z.coerce.number().min(0).max(500).default(0),
+  avg_carbs_g: z.coerce.number().min(0).max(1000).default(0),
+  avg_fat_g: z.coerce.number().min(0).max(500).default(0),
+  avg_fiber_g: z.coerce.number().min(0).max(200).default(0),
+  shortcut_aliases: z.array(z.string().trim().min(2).max(60)).max(15).default([]),
+  preset_notes: z.string().trim().max(240).nullable().optional(),
+  is_quick_check: z.boolean().default(true),
+});
+
+export const CreateActivityTemplateSchema = z.object({
+  canonical_name: z
+    .string()
+    .trim()
+    .min(1, "Zadej název aktivity.")
+    .max(48),
+  icon_key: z
+    .enum(["bike", "climb", "gym", "swim", "walk", "run", "activity"])
+    .default("activity"),
+  default_minutes: z.coerce.number().int().min(10).max(360).default(60),
+  max_minutes: z.coerce.number().int().min(60).max(600).default(180),
+  default_intensity: z.enum(["light", "medium", "high"]).default("medium"),
+  met_light: z.coerce.number().min(1.5).max(18).default(3.5),
+  met_medium: z.coerce.number().min(1.5).max(18).default(5.0),
+  met_high: z.coerce.number().min(1.5).max(18).default(6.5),
+  is_quick_check: z.boolean().default(true),
 });
 
 export const BodyMeasurementInputSchema = z
