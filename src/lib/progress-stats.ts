@@ -47,6 +47,8 @@ export const KCAL_PER_KG_FAT = 7700;
 export interface CalorieBalanceDayPoint {
   date: string;
   intakeKcal: number;
+  baseExpenditureKcal: number;
+  burnedActivityKcal: number;
   burnedTotalKcal: number;
   netKcal: number;
   onTarget: boolean;
@@ -364,6 +366,10 @@ export function computeLoggedCalorieBalanceStats(
   const points: CalorieBalanceDayPoint[] = credibleRows.map((row) => {
     const intakeKcal = Math.round(row.intake_kcal);
     const burnedTotalKcal = Math.round(row.burned_total_kcal);
+    const baseExpenditureKcal = Math.round(row.base_expenditure_kcal ?? 0);
+    const burnedActivityKcal = Math.round(
+      row.burned_activity_kcal ?? Math.max(0, burnedTotalKcal - baseExpenditureKcal)
+    );
     const netKcal = Math.round(row.net_kcal ?? intakeKcal - burnedTotalKcal);
     runningNetKcal += netKcal;
 
@@ -376,6 +382,8 @@ export function computeLoggedCalorieBalanceStats(
     return {
       date: row.log_date,
       intakeKcal,
+      baseExpenditureKcal,
+      burnedActivityKcal,
       burnedTotalKcal,
       netKcal,
       onTarget,

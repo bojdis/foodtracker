@@ -1366,11 +1366,11 @@ export function TrackerApp({
             energyUnit={energyUnit}
             todayDate={todayDate}
             refreshSignal={progressRefreshSignal}
-            onProfileUpdated={handleProfileSaved}
             onMeasurementChanged={() => {
               void fetchDayData(selectedDate, { silent: true });
             }}
             onOpenProfileSettings={() => setSettingsOpen(true)}
+            onOpenLogTab={() => setActiveTab("log")}
           />
         )}
       </main>
