@@ -2,6 +2,8 @@ import { after, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { processLogEntryInBackground } from "@/lib/agents/orchestrator";
 
+export const maxDuration = 120;
+
 interface RouteContext {
   params: Promise<{ id: string }>;
 }

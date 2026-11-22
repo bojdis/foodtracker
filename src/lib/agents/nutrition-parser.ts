@@ -16,7 +16,7 @@ import {
 } from "@/lib/types";
 
 const PARSER_MODEL = "gemini-3.5-flash-lite";
-const GEMINI_TIMEOUT_MS = 35_000;
+const GEMINI_TIMEOUT_MS = 90_000;
 
 export const FALLBACK_AI_NOTE =
   "Odhadnuto lokálním záložním parserem (pro plný AI rozbor doplň GEMINI_API_KEY do .env.local)";
@@ -63,7 +63,7 @@ function buildGeminiFallbackNoteFromError(err: unknown): string {
   const combined = `${status ?? ""} ${msg} ${bodyStr}`;
 
   if (/GEMINI_TIMEOUT/.test(combined)) {
-    return "Rozbor v Gemini API trval déle než 35 s — záznam byl okamžitě spočítán lokálním parserem.";
+    return "Rozbor v Gemini API trval déle než 90 s — záznam byl okamžitě spočítán lokálním parserem.";
   }
   if (
     /API_KEY_INVALID|API key not valid/i.test(combined) ||
@@ -310,6 +310,14 @@ function buildSystemInstruction(
     "- POZOR NA 100 G vs. CELÁ PORCE/BALENÍ: Výrobci často uvádí hodnoty na 100 g i na celou porci/balení (např. 1 láhev = 330 ml / 400 kcal, sendvič = 185 g). Pokud uživatel v doplňujícím textu neuvede jinak (např. 'vypil jsem jen půlku'), VŽDY propočítej a ulož hodnoty pro CELÉ spotřebované balení/porci!",
     "- V canonical_name a item_name uveď přesný český název výrobku (např. 'Mana Drink', 'Krůtí sendvič').",
     "- V ai_notes stručně uveď, že hodnoty byly vyčteny z etikety výrobku.",
+    "",
+    "PRAVIDLA PRO FOTKY HOTOVÝCH JÍDEL A PORCÍ NA TALÍŘI:",
+    "- Pokud je na fotce hotové jídlo (na talíři, v misce, krabičce, v ruce nebo na prkénku), vizuálně rozpoznaj všechny hlavní složky a realisticky odhadni hmotnost každé porce v gramech (portion_grams).",
+    "- PRO ODHAD VELIKOSTI PORCE VYUŽIJ REFERENČNÍ MĚŘÍTKO NA FOTCE: běžný mělký jídelní talíř má průměr ~26 cm, dezertní talíř ~20 cm, vidlička/nůž ~20 cm, lžíce ~19 cm, hrnek ~250–300 ml, sklenice ~300 ml.",
+    "- Složené jídlo rozděl na samostatné položky v poli 'items' (např. 'Kuřecí prso na grilu 160 g', 'Vařená rýže 180 g', 'Zeleninový salát 100 g') — lépe se tak kontroluje gramáž i makra.",
+    "- Nezapomeň realisticky započítat viditelný tuk na přípravu, omáčku, dresink, strouhaný sýr nebo zálivku (pokud uživatel v textu neuvede např. 'bez oleje' nebo 'nasucho').",
+    "- Pokud uživatel k fotce připsal doplňující text (např. 'malý talíř', '200 g masa', 'snědl jsem jen půlku'), ber jeho údaj jako nadřazenou pravdu a zbytek dopočítej podle fotky.",
+    "- V ai_notes stručně uveď, že porce byly odhadnuty z fotky, a zmiň hlavní předpoklady (např. velikost talíře nebo započtenou omáčku/tuk).",
     "",
     "PRAVIDLA PRO FOTKY DISPLEJE TLAKOMĚRU (TONOMETRU) NEBO OSOBNÍ VÁHY:",
     "- Pokud je na fotce displej digitálního tonometru (např. Omron, Microlife, Beurer, Hartmann), který zobrazuje čísla SYS (systolický/horní tlak), DIA (diastolický/dolní tlak) a případně PUL/PULSE (tep/min):",
@@ -566,11 +574,12 @@ export async function parseEntryWithAgent(params: {
     const isGenericImagePrompt =
       !trimmedRaw ||
       trimmedRaw === "Fotka štítku nebo zařízení" ||
+      trimmedRaw === "Fotka jídla, štítku nebo zařízení" ||
       trimmedRaw === "Výživový štítek z fotky";
 
     const imagePromptText = isGenericImagePrompt
-      ? "Analyzuj přiloženou fotku: 1) Pokud je na fotce displej tlakoměru (tonometru), přečti přesná čísla SYS (systolický tlak), DIA (diastolický tlak) a PUL/PULSE (tep) do objektu detected_measurement, zapiš je do summary_title (např. 'Tlak 135/85 mmHg, tep 72') a pole items nech prázdné []. 2) Pokud je na fotce osobní váha, přečti hmotnost v kg do detected_measurement.weight_kg a items nech []. 3) Pokud je na fotce výživový štítek, etiketa nebo jídlo, rozpadni ho na položky, gramáže a makroživiny v poli items a v detected_measurement nastav nuly."
-      : `${trimmedRaw} (Pokud je na fotce tlakoměr nebo váha, vyplň přesné hodnoty do detected_measurement; pokud jídlo/štítek, vyplň items.)`;
+      ? "Analyzuj přiloženou fotku: 1) Pokud je na fotce displej tlakoměru (tonometru), přečti přesná čísla SYS (systolický tlak), DIA (diastolický tlak) a PUL/PULSE (tep) do objektu detected_measurement, zapiš je do summary_title (např. 'Tlak 135/85 mmHg, tep 72') a pole items nech prázdné []. 2) Pokud je na fotce osobní váha, přečti hmotnost v kg do detected_measurement.weight_kg a items nech []. 3) Pokud je na fotce výživový štítek nebo obal, vyčti přesné nutriční hodnoty pro celou porci/balení. 4) Pokud je na fotce hotové jídlo (na talíři, v misce apod.), rozlož ho na jednotlivé složky, odhadni realistickou gramáž každé porce podle velikosti talíře/příboru a spočítej kalorie i makroživiny do pole items (v detected_measurement nastav nuly)."
+      : `${trimmedRaw} (Pokud je na fotce tlakoměr nebo váha, vyplň přesné hodnoty do detected_measurement; pokud hotové jídlo nebo štítek, rozlož ho na položky s odhadem gramáží podle fotky i doplňujícího textu uživatele a vyplň items.)`;
 
     const inputPayload = cleanBase64
       ? [

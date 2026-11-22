@@ -19,6 +19,8 @@ import { upsertBodyMeasurementAndSyncProfile } from "@/lib/measurements-service"
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
+export const maxDuration = 120;
+
 export async function GET(request: NextRequest) {
   const supabase = await createClient();
   const { data: claimsData, error: authError } = await supabase.auth.getClaims();
@@ -130,9 +132,9 @@ export async function GET(request: NextRequest) {
     entry_items: Array.isArray(row.entry_items) ? row.entry_items : [],
   }));
 
-  // Watchdog: recover orphaned pending/processing entries (> 65s old, e.g. if dev server restarted mid-flight)
+  // Watchdog: recover orphaned pending/processing entries (> 120s old, e.g. if server restarted mid-flight)
   const nowMs = Date.now();
-  const STALE_PENDING_MS = 65_000;
+  const STALE_PENDING_MS = 120_000;
   const staleIds = entries
     .filter((e) => {
       if (e.status !== "pending" && e.status !== "processing") return false;
@@ -308,7 +310,7 @@ export async function POST(request: Request) {
     let parsedResult;
     try {
       parsedResult = await parseEntryWithAgent({
-        rawText: textForLog || "Fotka štítku nebo zařízení",
+        rawText: textForLog || "Fotka jídla, štítku nebo zařízení",
         imageBase64: input.image_base64,
         imageMimeType: input.image_mime_type,
         userWeightKg,
@@ -404,7 +406,7 @@ export async function POST(request: Request) {
         time_slot: timeSlot,
         raw_text: rawTextToSave,
         summary_title: summaryTitle,
-        ai_notes: parsedResult.ai_notes ?? "Hodnoty vyčteny z fotky výživového štítku",
+        ai_notes: parsedResult.ai_notes ?? "Hodnoty odhadnuty z přiložené fotky",
         entry_type: entryType,
         status: "done",
         processed_at: new Date().toISOString(),

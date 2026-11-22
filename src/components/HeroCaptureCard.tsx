@@ -479,10 +479,10 @@ export function HeroCaptureCard({
             <div className="min-w-0 flex-1 text-xs">
               <p className="flex items-center gap-1.5 font-bold text-emerald-800 dark:text-emerald-200">
                 <Camera className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
-                <span>Fotka štítku / jídla připojena</span>
+                <span>Fotka jídla / štítku / tlaku připojena</span>
               </p>
               <p className="mt-0.5 text-slate-500 dark:text-slate-400">
-                Model vyčte přesné nutriční hodnoty přímo z etikety
+                Model odhadne porci z fotky jídla nebo vyčte hodnoty ze štítku / tlakoměru
               </p>
             </div>
             <button
@@ -519,8 +519,8 @@ export function HeroCaptureCard({
             aria-label="Zápis jídla, pohybu nebo váhy"
             placeholder={
               selectedImage
-                ? "Volitelně doplň poznámku (např. „vypil jsem jen půlku“ nebo nech prázdné)…"
-                : "Napiš co jsi snědl nebo dělal — např. „2 vejce, chléb“, „tlak 125/82 tep 70“, nebo vyfoť štítek / tlakoměr 📷…"
+                ? "Volitelně doplň poznámku (např. „malý talíř, bez oleje“ nebo „vypil jsem jen půlku“)…"
+                : "Napiš co jsi snědl nebo dělal — např. „2 vejce, chléb“, „tlak 125/82 tep 70“, nebo vyfoť jídlo / štítek / tlakoměr 📷…"
             }
             className="w-full resize-none rounded-2xl border-2 border-slate-200/90 bg-slate-50/90 px-3.5 py-2.5 text-base font-medium leading-snug text-slate-900 placeholder:font-normal placeholder:text-slate-400 outline-none transition focus:border-emerald-500 focus:bg-white focus:ring-4 focus:ring-emerald-500/15 dark:border-slate-700/90 dark:bg-slate-950/80 dark:text-white dark:placeholder:text-slate-500 dark:focus:border-emerald-400 dark:focus:bg-slate-950"
           />
@@ -533,8 +533,8 @@ export function HeroCaptureCard({
               type="button"
               disabled={submitting || imageCompressing}
               onClick={() => fileInputRef.current?.click()}
-              title="Vyfotit výživový štítek nebo displej tlakoměru/váhy"
-              aria-label="Vyfotit výživový štítek nebo displej tlakoměru/váhy"
+              title="Vyfotit jídlo, výživový štítek nebo displej tlakoměru/váhy"
+              aria-label="Vyfotit jídlo, výživový štítek nebo displej tlakoměru/váhy"
               className={`inline-flex items-center gap-1.5 rounded-2xl border px-3 py-2 text-xs font-semibold transition active:scale-95 ${
                 selectedImage
                   ? "border-emerald-500 bg-emerald-500/15 text-emerald-800 dark:border-emerald-400 dark:text-emerald-200"
@@ -546,7 +546,7 @@ export function HeroCaptureCard({
               ) : (
                 <Camera className="h-3.5 w-3.5 text-emerald-500" />
               )}
-              <span>{selectedImage ? "Fotka připojena" : "Vyfotit štítek / tlak"}</span>
+              <span>{selectedImage ? "Fotka připojena" : "Vyfotit jídlo / štítek / tlak"}</span>
             </button>
 
             <button
