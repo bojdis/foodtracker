@@ -12,7 +12,7 @@ import type {
 
 const EMBEDDING_MODEL = "gemini-embedding-001";
 const EMBEDDING_DIMENSION = 768;
-const VECTOR_MATCH_THRESHOLD = 0.87;
+const VECTOR_MATCH_THRESHOLD = 0.94;
 
 const CZECH_STOP_WORDS = new Set([
   "a",
@@ -120,6 +120,141 @@ export function normalizeMealSignature(text: string): string {
     .filter((t) => t.length >= 2);
 
   return Array.from(new Set(stemmedTokens)).sort().join(" ");
+}
+
+/**
+ * Distinguishing product/flavor/ingredient markers that must NEVER be conflated
+ * across two meals (e.g. "Chleba se šunkou" vs "Chleba šunka sýr" vs "Rohlík se šunkou",
+ * or "Mullermilch Protein čokoládový" vs "Mullermilch zero čokoládový" vs "Mullermilch čokoládový").
+ */
+const DISTINGUISHING_MARKER_PATTERNS: Array<[string, RegExp]> = [
+  ["zero", /\b(?:zero|0\s*%|bez\s+cukr\w*)\b/],
+  ["light", /\blight\b/],
+  ["protein", /\bprotein\w*\b/],
+  ["creatine", /\bkreatin\w*|\bcreatin\w*\b/],
+  ["inulin", /\binulin\w*\b/],
+  ["cokolad", /\bcokolad\w*|\bcoco\w*|\bgrank\w*|\bkaka\w*\b/],
+  ["vanilk", /\bvanilk\w*|\bvanill\w*\b/],
+  ["jahod", /\bjahod\w*\b/],
+  ["banan", /\bbanan\w*\b/],
+  ["pistac", /\bpistac\w*\b/],
+  ["karamel", /\bkaramel\w*|\bcaramel\w*\b/],
+  ["kokos", /\bkokos\w*\b/],
+  ["malin", /\bmalin\w*\b/],
+  ["boruvk", /\bboruvk\w*\b/],
+  ["chleb", /\bchleb\w*\b/],
+  ["rohlik", /\brohlik\w*\b/],
+  ["housk", /\bhousk\w*|\baiserk\w*|\bkaiserk\w*\b/],
+  ["baget", /\bbaget\w*\b/],
+  ["toast", /\btoast\w*|\btoust\w*\b/],
+  ["tortill", /\btortill\w*|\bquesadill\w*|\bburrit\w*\b/],
+  ["syr", /\bsyr\w*|\bgoud\w*|\beidam\w*|\bcheddar\w*|\bmozzarell\w*|\bhermelin\w*|\bniv\w*|\bparmazan\w*\b/],
+  ["sunk", /\bsunk\w*|\bprsut\w*|\bsalam\w*|\bslanin\w*\b/],
+  ["vejc", /\bvejc\w*|\bvajec\w*|\bvajick\w*|\bomelet\w*\b/],
+  ["maslo", /\bmasl\w*\b/],
+  ["avokad", /\bavokad\w*\b/],
+  ["tvaroh", /\btvaroh\w*\b/],
+  ["jogurt", /\bjogurt\w*|\bskyr\w*\b/],
+  ["fazol", /\bfazol\w*\b/],
+  ["mensi", /\bmens\w*|\bmal[aeouy]\b|\bpolovic\w*\b/],
+];
+
+function toPlainAscii(input: string): string {
+  return input
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
+function extractDistinguishingMarkers(text: string): Set<string> {
+  const ascii = toPlainAscii(text);
+  const found = new Set<string>();
+  for (const [key, re] of DISTINGUISHING_MARKER_PATTERNS) {
+    if (re.test(ascii)) {
+      found.add(key);
+    }
+  }
+  return found;
+}
+
+function hasSymmetricMarkers(aText: string, bText: string): boolean {
+  const aMarkers = extractDistinguishingMarkers(aText);
+  const bMarkers = extractDistinguishingMarkers(bText);
+  if (aMarkers.size !== bMarkers.size) return false;
+  for (const m of aMarkers) {
+    if (!bMarkers.has(m)) return false;
+  }
+  return true;
+}
+
+function tokenJaccard(sigA: string, sigB: string): number {
+  const setA = new Set(sigA.split(" ").filter(Boolean));
+  const setB = new Set(sigB.split(" ").filter(Boolean));
+  if (setA.size === 0 && setB.size === 0) return 1;
+  if (setA.size === 0 || setB.size === 0) return 0;
+  let inter = 0;
+  for (const tok of setA) {
+    if (setB.has(tok)) inter++;
+  }
+  const union = setA.size + setB.size - inter;
+  return union > 0 ? inter / union : 0;
+}
+
+function areMealsStructurallyCompatible(params: {
+  tpl: MealTemplateRow;
+  canonicalName: string;
+  normalizedItemsSummary: string;
+  foodItemsCount: number;
+  totalKcal: number;
+}): boolean {
+  const {
+    tpl,
+    canonicalName,
+    normalizedItemsSummary,
+    foodItemsCount,
+    totalKcal,
+  } = params;
+
+  const tplCombined = `${tpl.canonical_name} ${tpl.normalized_items_summary}`;
+  const entryCombined = `${canonicalName} ${normalizedItemsSummary}`;
+
+  // 1. Any distinguishing food/variant marker (e.g. sýr, rohlík vs chleba, zero, protein, flavor)
+  // must be present in BOTH or NEITHER.
+  if (!hasSymmetricMarkers(tplCombined, entryCombined)) {
+    return false;
+  }
+
+  // 2. Ingredient count check when template stores structured items
+  const tplItemsCount = Array.isArray(tpl.template_items)
+    ? tpl.template_items.length
+    : 0;
+  if (tplItemsCount > 0 && foodItemsCount > 0 && tplItemsCount !== foodItemsCount) {
+    const tplCanonSig = normalizeMealSignature(tpl.canonical_name);
+    const entryCanonSig = normalizeMealSignature(canonicalName);
+    if (!tplCanonSig || tplCanonSig !== entryCanonSig) {
+      return false;
+    }
+  }
+
+  // 3. Calorie sanity check (±25% tolerance for minor gram variations of the SAME meal)
+  if (tpl.avg_kcal > 0 && totalKcal > 0) {
+    const ratio = totalKcal / tpl.avg_kcal;
+    if (ratio < 0.75 || ratio > 1.3) {
+      return false;
+    }
+  }
+
+  // 4. High lexical overlap of normalized signatures so embeddings never merge unrelated dishes
+  const canonOverlap = tokenJaccard(
+    normalizeMealSignature(tpl.canonical_name),
+    normalizeMealSignature(canonicalName)
+  );
+  const itemsOverlap = tokenJaccard(
+    normalizeMealSignature(tpl.normalized_items_summary || tpl.canonical_name),
+    normalizeMealSignature(normalizedItemsSummary || canonicalName)
+  );
+
+  return Math.max(canonOverlap, itemsOverlap) >= 0.8;
 }
 
 /**
@@ -232,25 +367,38 @@ export async function detectAndPromoteRecurringMeal(params: {
 
   let matchedRow: MealTemplateRow | null = null;
 
-  // 1. Try semantic vector similarity match first when embedding is available
+  // 1. Try semantic vector similarity match first when embedding is available,
+  // strictly gated by structural/ingredient/variant compatibility
   if (serializedEmbedding) {
     const { data: vectorMatches } = await supabase.rpc("match_meal_templates", {
       query_embedding: serializedEmbedding,
       match_threshold: VECTOR_MATCH_THRESHOLD,
-      match_count: 3,
+      match_count: 5,
     });
 
     if (vectorMatches && vectorMatches.length > 0) {
-      const bestMatchId = vectorMatches[0].id;
-      const { data: fullRow } = await supabase
-        .from("meal_templates")
-        .select("*")
-        .eq("id", bestMatchId)
-        .eq("user_id", userId)
-        .maybeSingle();
+      for (const candidate of vectorMatches) {
+        const { data: fullRow } = await supabase
+          .from("meal_templates")
+          .select("*")
+          .eq("id", candidate.id)
+          .eq("user_id", userId)
+          .maybeSingle();
 
-      if (fullRow && !fullRow.is_hidden) {
-        matchedRow = fullRow;
+        if (
+          fullRow &&
+          !fullRow.is_hidden &&
+          areMealsStructurallyCompatible({
+            tpl: fullRow,
+            canonicalName,
+            normalizedItemsSummary,
+            foodItemsCount: foodItems.length,
+            totalKcal,
+          })
+        ) {
+          matchedRow = fullRow;
+          break;
+        }
       }
     }
   }
@@ -296,13 +444,19 @@ export async function detectAndPromoteRecurringMeal(params: {
           if (aliasMatch) return true;
 
           const tplCanonicalSig = normalizeMealSignature(tpl.canonical_name);
-          return (
+          if (
             targetCanonicalSig.length > 0 &&
             tplCanonicalSig === targetCanonicalSig
-          );
+          ) {
+            return hasSymmetricMarkers(
+              `${tpl.canonical_name} ${tpl.normalized_items_summary}`,
+              `${canonicalName} ${normalizedItemsSummary}`
+            );
+          }
+          return false;
         }) ?? null;
 
-      // Pass 2: Normalized ingredient-list signature match (within ±30% kcal so different portion presets stay distinct)
+      // Pass 2: Normalized ingredient-list signature match (within ±25% kcal and identical markers)
       if (!matchedRow && targetItemsSig.length > 0) {
         matchedRow =
           visibleTemplates.find((tpl) => {
@@ -310,11 +464,13 @@ export async function detectAndPromoteRecurringMeal(params: {
               tpl.normalized_items_summary
             );
             if (tplItemsSig !== targetItemsSig) return false;
-            if (tpl.avg_kcal > 0 && totalKcal > 0) {
-              const ratio = totalKcal / tpl.avg_kcal;
-              return ratio >= 0.7 && ratio <= 1.35;
-            }
-            return true;
+            return areMealsStructurallyCompatible({
+              tpl,
+              canonicalName,
+              normalizedItemsSummary,
+              foodItemsCount: foodItems.length,
+              totalKcal,
+            });
           }) ?? null;
       }
     }
@@ -327,9 +483,12 @@ export async function detectAndPromoteRecurringMeal(params: {
     const newOccurrenceCount = prevCount + 1;
     const wasQuickCheck = matchedRow.is_quick_check;
     const isQuickCheck = wasQuickCheck || newOccurrenceCount >= 3;
+    // Lock any already-pinned favorite (`is_quick_check === true`) OR shortcut preset
+    // so free-text entries never silently mutate the user's favorite kcal or ingredients!
     const isLockedPersonalPreset =
-      Array.isArray(matchedRow.shortcut_aliases) &&
-      matchedRow.shortcut_aliases.length > 0;
+      matchedRow.is_quick_check ||
+      (Array.isArray(matchedRow.shortcut_aliases) &&
+        matchedRow.shortcut_aliases.length > 0);
 
     if (isLockedPersonalPreset) {
       const { error: updatePresetError } = await supabase
@@ -618,17 +777,18 @@ export async function detectAndPromoteRecurringActivity(params: {
     const wasQuickCheck = typedExisting.is_quick_check;
     const isQuickCheck = wasQuickCheck || nextCount >= 3;
 
-    // Smoothly adapt default_minutes towards recent habit (rounded to 5 min)
-    const blendedMinutes = roundTo5Min(
-      typedExisting.default_minutes * 0.5 + loggedMinutes * 0.5
-    );
+    // Only blend default_minutes while an unpinned candidate is still being learned (1 -> 2 -> 3).
+    // Once pinned (`is_quick_check === true`), keep the user's configured default_minutes untouched!
+    const nextDefaultMinutes = typedExisting.is_quick_check
+      ? typedExisting.default_minutes
+      : roundTo5Min(typedExisting.default_minutes * 0.5 + loggedMinutes * 0.5);
 
     await supabase
       .from("activity_templates")
       .update({
         occurrence_count: nextCount,
         is_quick_check: isQuickCheck,
-        default_minutes: blendedMinutes,
+        default_minutes: nextDefaultMinutes,
         max_minutes: Math.max(typedExisting.max_minutes, loggedMinutes + 30),
         last_done_at: nowIso,
         updated_at: nowIso,

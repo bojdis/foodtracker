@@ -43,6 +43,7 @@ import {
 import {
   computeActivityTemplateDayMinutes,
   computeMealTemplateDayCounts,
+  findDaySportExistingState,
 } from "@/lib/template-counter";
 
 type ActivityIconKey =
@@ -104,6 +105,7 @@ interface QuickCheckBarProps {
     activity_template_id: number;
     duration_minutes: number;
     intensity: ActivityIntensity;
+    mode?: "replace_day" | "add";
   }) => Promise<boolean>;
   onCreateActivityTemplate: (
     payload: ActivityTemplatePayload
@@ -324,6 +326,14 @@ export function QuickCheckBar({
     [quickActivities, selectedSportId]
   );
 
+  const selectedSportDayState = useMemo(
+    () =>
+      selectedSport
+        ? findDaySportExistingState(selectedSport, entries)
+        : null,
+    [selectedSport, entries]
+  );
+
   const totalCandidatesCount = learningMeals.length + learningActivities.length;
   const isEditingExisting = editingMealId !== null || editingActivityId !== null;
   const unitStr = energyUnitLabel(energyUnit);
@@ -507,9 +517,17 @@ export function QuickCheckBar({
       setSelectedSportId(null);
       return;
     }
+    const existing = findDaySportExistingState(act, entries);
     setSelectedSportId(act.id);
-    setSportMinutes(act.default_minutes);
-    setSportIntensity(toIntensity(act.default_intensity));
+    if (existing.hasStandaloneEntry && existing.totalMinutes > 0) {
+      setSportMinutes(existing.totalMinutes);
+      setSportIntensity(
+        existing.latestIntensity ?? toIntensity(act.default_intensity)
+      );
+    } else {
+      setSportMinutes(act.default_minutes);
+      setSportIntensity(toIntensity(act.default_intensity));
+    }
   }
 
   const userWeightKg = profile?.weight_kg ?? 75;
@@ -542,12 +560,13 @@ export function QuickCheckBar({
       ? [30, 60, 90, 120, 180]
       : [30, 45, 60, 90, 120];
 
-  async function handleConfirmQuickActivity() {
+  async function handleConfirmQuickActivity(mode: "replace_day" | "add") {
     if (!selectedSport) return;
     const ok = await onLogQuickActivity({
       activity_template_id: selectedSport.id,
       duration_minutes: sportMinutes,
       intensity: sportIntensity,
+      mode,
     });
     if (ok) {
       setSelectedSportId(null);
@@ -1395,10 +1414,12 @@ export function QuickCheckBar({
               {/* Action Buttons */}
               <div className="mt-2.5 flex flex-wrap items-center justify-between gap-2">
                 <span className="text-[11px] text-slate-500 dark:text-slate-400">
-                  Minuty i intenzitu si aplikace zapamatuje pro příště.
+                  {selectedSportDayState?.hasStandaloneEntry
+                    ? "Upravuješ dnešní zapsaný trénink · výchozí délku změníš přes Upravit."
+                    : `Výchozí délka šablony: ${selectedSport.default_minutes} min (změníš přes Upravit).`}
                 </span>
 
-                <div className="ml-auto flex items-center gap-2">
+                <div className="ml-auto flex flex-wrap items-center gap-2">
                   <button
                     type="button"
                     onClick={() => setSelectedSportId(null)}
@@ -1407,10 +1428,28 @@ export function QuickCheckBar({
                     Zrušit
                   </button>
 
+                  {selectedSportDayState?.hasStandaloneEntry && (
+                    <button
+                      type="button"
+                      disabled={loggingActivityId === selectedSport.id}
+                      onClick={() => void handleConfirmQuickActivity("add")}
+                      className="inline-flex items-center gap-1 rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-1.5 text-xs font-bold text-amber-800 transition hover:bg-amber-500/20 disabled:opacity-60 dark:text-amber-200"
+                    >
+                      <Plus className="h-3.5 w-3.5" />
+                      <span>Přidat další</span>
+                    </button>
+                  )}
+
                   <button
                     type="button"
                     disabled={loggingActivityId === selectedSport.id}
-                    onClick={() => void handleConfirmQuickActivity()}
+                    onClick={() =>
+                      void handleConfirmQuickActivity(
+                        selectedSportDayState?.hasStandaloneEntry
+                          ? "replace_day"
+                          : "add"
+                      )
+                    }
                     className="inline-flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 px-4 py-1.5 text-xs font-extrabold text-white shadow-md shadow-amber-500/20 transition hover:from-amber-600 hover:to-orange-600 active:scale-95 disabled:opacity-60"
                   >
                     {loggingActivityId === selectedSport.id ? (
@@ -1419,7 +1458,9 @@ export function QuickCheckBar({
                       <Check className="h-3.5 w-3.5 stroke-[2.75]" />
                     )}
                     <span>
-                      Zapsat ({formatEnergy(-previewBurnedKcal, energyUnit)})
+                      {selectedSportDayState?.hasStandaloneEntry
+                        ? `Uložit změnu (${formatEnergy(-previewBurnedKcal, energyUnit)})`
+                        : `Zapsat (${formatEnergy(-previewBurnedKcal, energyUnit)})`}
                     </span>
                   </button>
                 </div>

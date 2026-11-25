@@ -1,4 +1,5 @@
 import type {
+  ActivityIntensity,
   ActivityTemplateRow,
   EntryItemRow,
   LogEntryWithItems,
@@ -6,10 +7,17 @@ import type {
 } from "./types";
 
 export interface MealTemplateDayCount {
-  /** Total portions detected across all entries on the selected day (quick-tap + text). */
+  /** Total portions detected across all entries on the selected day (quick-tap + exact text). */
   totalCount: number;
   /** Number of standalone entries directly removable by the quick `-` button. */
   removableCount: number;
+}
+
+export interface DaySportExistingState {
+  hasStandaloneEntry: boolean;
+  entryCount: number;
+  totalMinutes: number;
+  latestIntensity: ActivityIntensity | null;
 }
 
 interface ParsedTemplateItemRef {
@@ -31,8 +39,15 @@ function stripParenthetical(input: string): string {
   return input.replace(/\s*\([^)]*\)\s*/g, " ").replace(/\s+/g, " ").trim();
 }
 
-function escapeRegExp(str: string): string {
-  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+function stripLeadingMultiplierAndTrailingWeight(ascii: string): string {
+  return ascii
+    .replace(/^\d+(?:[.,]\d+)?\s*(?:x|×|ks\b|kus\w*|porc\w*)?\s+/, "")
+    .replace(
+      /\s+\d+(?:[.,]\d+)?\s*(?:g|gr|gram\w*|ml|l|cl|dl|ks|kus\w*)$/,
+      ""
+    )
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 const WORD_MULTIPLIERS: Record<string, number> = {
@@ -94,7 +109,9 @@ function extractTemplateItemRefs(tpl: MealTemplateRow): ParsedTemplateItemRef[] 
         : typeof rec.item_name === "string"
           ? rec.item_name
           : "";
-    const ascii = stripAscii(stripParenthetical(name));
+    const ascii = stripLeadingMultiplierAndTrailingWeight(
+      stripAscii(stripParenthetical(name))
+    );
     if (!ascii) continue;
     refs.push({
       canonicalAscii: ascii,
@@ -115,7 +132,7 @@ function buildTemplatePhrases(tpl: MealTemplateRow): string[] {
   const clean: string[] = [];
   for (const r of rawList) {
     const a = stripAscii(r);
-    if (a.length >= 3 && !seen.has(a)) {
+    if (a.length >= 2 && !seen.has(a)) {
       seen.add(a);
       clean.push(a);
     }
@@ -123,25 +140,45 @@ function buildTemplatePhrases(tpl: MealTemplateRow): string[] {
   return clean;
 }
 
+function splitRawTextClausesAscii(rawText: string): string[] {
+  const asciiRaw = stripAscii(rawText).replace(
+    /\b(protein(?:\s+shake)?|shake)\s*(?:\+|s|se|a|plus)\s*(?:10\s*g\s*)?(inulin\w*)\b/g,
+    "$1_WITH_$2"
+  );
+
+  return asciiRaw
+    .split(/(?:,|;|\.|!|\+|\n|\s+(?:a|i|plus)\s+)/)
+    .map((c) => c.replace(/_WITH_/g, " + ").replace(/\s+/g, " ").trim())
+    .filter(Boolean);
+}
+
+function stripClauseMultiplierPrefix(clause: string): string {
+  return clause
+    .replace(/^\d+(?:[.,]\d+)?\s*(?:x|×|ks\b|kus\w*|porc\w*)?\s+/, "")
+    .replace(
+      /^(?:jeden|jedna|jedno|jednu|dva|dve|dvojit\w*|tri|ctyri)\s+/,
+      ""
+    )
+    .replace(
+      /\s+\d+(?:[.,]\d+)?\s*(?:g|gr|gram\w*|ml|l|cl|dl|ks|kus\w*)$/,
+      ""
+    )
+    .trim();
+}
+
 /**
- * Checks if a single food item headline/canonical name represents the given phrase,
- * guarding against false positives like "Vietnamská káva" matching "kafe".
+ * Strict exact-identity check for a single food item against a template phrase.
+ * Never matches prefixes or substrings (so "Mullermilch zero čokoládový" or
+ * "Mullermilch čokoládový" will NEVER match "Mullermilch Protein čokoládový",
+ * and "Chleba se šunkou a sýrem" will NEVER match "Chleba se šunkou").
  */
-function itemMatchesPhrase(
+function itemMatchesPhraseExact(
   itemHeadlineAscii: string,
   itemCanonAscii: string,
   phraseAscii: string
 ): boolean {
-  if (
-    itemHeadlineAscii === phraseAscii ||
-    itemCanonAscii === phraseAscii
-  ) {
-    return true;
-  }
-
-  // Guard coffee styles that are NOT Radek's "Kafe (ice latté)"
   const DISQUALIFYING_COFFEE_MODIFIERS =
-    /\b(?:vietnam\w*|salk\w*|tureck\w*|turk\w*| Alzir\w*|irsk\w*)\b/i;
+    /\b(?:vietnam\w*|salk\w*|tureck\w*|turk\w*|alzir\w*|irsk\w*)\b/i;
   if (
     (phraseAscii === "kafe" ||
       phraseAscii.includes("latte") ||
@@ -152,38 +189,49 @@ function itemMatchesPhrase(
     return false;
   }
 
-  const wordBoundaryRe = new RegExp(
-    `(?:^|\\s)${escapeRegExp(phraseAscii)}(?:$|\\s)`
+  const cleanHeadline = stripLeadingMultiplierAndTrailingWeight(itemHeadlineAscii);
+  const cleanCanon = stripLeadingMultiplierAndTrailingWeight(itemCanonAscii);
+
+  return (
+    itemHeadlineAscii === phraseAscii ||
+    itemCanonAscii === phraseAscii ||
+    cleanHeadline === phraseAscii ||
+    cleanCanon === phraseAscii
   );
+}
 
-  // Strip leading multiplier ("2x toast" -> "toast") before checking headline
-  const strippedHeadline = itemHeadlineAscii.replace(
-    /^\d+(?:[.,]\d+)?\s*(?:x|×)?\s+/,
-    ""
-  );
+const VARIANT_MODIFIER_TOKENS = [
+  "zero",
+  "light",
+  "protein",
+  "cokolad",
+  "vanilk",
+  "jahod",
+  "banan",
+  "karamel",
+  "kokos",
+  "pistac",
+  "malin",
+  "chleb",
+  "rohlik",
+  "housk",
+  "toast",
+  "toust",
+  "syr",
+  "goud",
+  "eidam",
+  "cheddar",
+  "mozzarell",
+  "sunk",
+];
 
-  if (
-    strippedHeadline === phraseAscii ||
-    strippedHeadline.startsWith(`${phraseAscii} `) ||
-    itemCanonAscii.startsWith(`${phraseAscii} `)
-  ) {
-    return true;
+function hasConflictingVariantModifier(aAscii: string, bAscii: string): boolean {
+  for (const mod of VARIANT_MODIFIER_TOKENS) {
+    const re = new RegExp(`\\b${mod}\\w*\\b`);
+    if (re.test(aAscii) !== re.test(bAscii)) {
+      return true;
+    }
   }
-
-  // Multi-word aliases (e.g. "ice latte", "ledova kava", "protein + inulin", "mensi musli")
-  // AND standalone coffee/latte keywords (already guarded by DISQUALIFYING_COFFEE_MODIFIERS + kcal floor)
-  const allowAnywhereOnWordBoundary =
-    phraseAscii.includes(" ") ||
-    phraseAscii === "latte" ||
-    phraseAscii === "kafe";
-
-  if (allowAnywhereOnWordBoundary && wordBoundaryRe.test(strippedHeadline)) {
-    return true;
-  }
-  if (allowAnywhereOnWordBoundary && wordBoundaryRe.test(itemCanonAscii)) {
-    return true;
-  }
-
   return false;
 }
 
@@ -191,12 +239,22 @@ function ingredientMatchesItem(
   refCanonicalAscii: string,
   foodItem: EntryItemRow
 ): boolean {
-  const itemCanon = stripAscii(stripParenthetical(foodItem.canonical_name));
-  const itemName = stripAscii(stripParenthetical(foodItem.item_name));
+  const itemCanon = stripLeadingMultiplierAndTrailingWeight(
+    stripAscii(stripParenthetical(foodItem.canonical_name))
+  );
+  const itemName = stripLeadingMultiplierAndTrailingWeight(
+    stripAscii(stripParenthetical(foodItem.item_name))
+  );
 
   if (itemCanon === refCanonicalAscii || itemName === refCanonicalAscii) {
     return true;
   }
+
+  // Prevent conflating distinct branded/flavored variants (e.g. Mullermilch zero vs Protein)
+  if (hasConflictingVariantModifier(refCanonicalAscii, `${itemCanon} ${itemName}`)) {
+    return false;
+  }
+
   if (
     itemCanon.includes(refCanonicalAscii) ||
     refCanonicalAscii.includes(itemCanon)
@@ -206,21 +264,30 @@ function ingredientMatchesItem(
   return false;
 }
 
+function isKcalCloseToTemplate(
+  actualKcal: number,
+  templateKcal: number,
+  multiplier = 1
+): boolean {
+  const expected = templateKcal * Math.max(1, multiplier);
+  if (expected <= 0 || actualKcal <= 0) return true;
+  const ratio = actualKcal / expected;
+  return ratio >= 0.78 && ratio <= 1.25;
+}
+
 /**
- * Computes accurate per-day counts for every pinned/active meal template across:
- * 1. One-tap `quick_check` entries (`entry.meal_template_id === tpl.id`)
- * 2. Standalone text entries (`"kafe"`, `"2× toast"`, `"protein"`)
- * 3. Multi-item / full-day text entries (`"toast a kafe"`, `"omeleta... Ice latte 150 ml..."`)
- * 4. Pending / processing entries immediately after pressing Enter (`0 ms` feedback)
+ * Computes accurate, strict per-day counts for every pinned/active meal template:
+ * - One-tap `quick_check` entries (`entry.entry_type === "quick_check"`)
+ * - Exact standalone text entries matching the template's items & calories
+ * - Multi-preset combinations where all items/clauses match explicit templates (e.g. "toast a kafe")
+ * - Never checks off a favorite meal when extra ingredients were added (e.g. "chleba, šunka, sýr" != "Chleba se šunkou")
+ *   or when a different product variant was logged (e.g. "Mullermilch Protein zero" != "Mullermilch Protein čokoládový").
  */
 export function computeMealTemplateDayCounts(
   templates: MealTemplateRow[],
   entries: LogEntryWithItems[]
 ): Map<number, MealTemplateDayCount> {
   const result = new Map<number, MealTemplateDayCount>();
-  // IMPORTANT: Only count pinned quick-check templates (`is_quick_check && !is_hidden`).
-  // Unpinned candidate rows (`is_quick_check === false`) created from multi-meal diary entries
-  // must NEVER claim `entry.meal_template_id` or `claimedIndices` and block quick-check pills!
   const activeTemplates = templates.filter(
     (t) => t.is_quick_check && !t.is_hidden
   );
@@ -231,23 +298,21 @@ export function computeMealTemplateDayCounts(
   const templateById = new Map<number, MealTemplateRow>();
   const templateRefsById = new Map<number, ParsedTemplateItemRef[]>();
 
-  // Phrase table sorted longest-first so "menší porce müsli" / "menší müsli" claims items before "müsli"
   const phraseEntries: Array<{ phraseAscii: string; tpl: MealTemplateRow }> = [];
 
   for (const tpl of activeTemplates) {
+    const phrases = buildTemplatePhrases(tpl);
     templateById.set(tpl.id, tpl);
     templateRefsById.set(tpl.id, extractTemplateItemRefs(tpl));
     result.set(tpl.id, { totalCount: 0, removableCount: 0 });
 
-    for (const phraseAscii of buildTemplatePhrases(tpl)) {
+    for (const phraseAscii of phrases) {
       phraseEntries.push({ phraseAscii, tpl });
     }
   }
 
   phraseEntries.sort((a, b) => b.phraseAscii.length - a.phraseAscii.length);
 
-  // Multi-ingredient templates sorted by ingredient count DESC so supersets (Müsli: 3 items)
-  // claim shared ingredients before subsets (Kakao: 2 items).
   const multiItemTemplates = activeTemplates
     .filter((t) => (templateRefsById.get(t.id)?.length ?? 0) >= 2)
     .sort((a, b) => {
@@ -268,35 +333,55 @@ export function computeMealTemplateDayCounts(
   for (const entry of entries) {
     if (entry.status === "error") continue;
 
-    // 1. Direct FK match when entry represents that specific template
-    if (entry.meal_template_id != null) {
+    const foodItems = entry.entry_items.filter((i) => i.item_kind === "food");
+
+    // 1. One-tap `quick_check` entry — always an exact 1× match for its template
+    if (entry.entry_type === "quick_check" && entry.meal_template_id != null) {
       const directTpl = templateById.get(entry.meal_template_id);
       if (directTpl) {
-        const expectedItemsCount =
-          templateRefsById.get(directTpl.id)?.length ?? 1;
-        const foodItemsCount = entry.entry_items.filter(
-          (i) => i.item_kind === "food"
-        ).length;
-        const isStandaloneTemplateEntry =
-          entry.entry_type === "quick_check" ||
-          foodItemsCount <= expectedItemsCount + 1;
+        addCount(directTpl.id, 1, 1);
+        continue;
+      }
+    }
 
-        if (isStandaloneTemplateEntry) {
-          const qty =
-            entry.entry_type === "quick_check"
-              ? 1
-              : extractPortionCountPrefix(
-                  entry.summary_title || entry.raw_text
-                );
+    // 1B. Standalone free-text entry with `meal_template_id` — verify ingredients & kcal truly match!
+    if (entry.meal_template_id != null) {
+      const directTpl = templateById.get(entry.meal_template_id);
+      if (directTpl && foodItems.length > 0) {
+        const refs = templateRefsById.get(directTpl.id) ?? [];
+        const qty = extractPortionCountPrefix(
+          entry.summary_title || entry.raw_text
+        );
+        const entryKcal =
+          entry.total_intake_kcal ||
+          foodItems.reduce((s, fi) => s + fi.kcal, 0);
+
+        const sameItemCount = refs.length > 0 && foodItems.length === refs.length;
+        const usedIdx = new Set<number>();
+        const allItemsMatchRefs =
+          sameItemCount &&
+          refs.every((ref) => {
+            const idx = foodItems.findIndex(
+              (fi, i) => !usedIdx.has(i) && ingredientMatchesItem(ref.canonicalAscii, fi)
+            );
+            if (idx === -1) return false;
+            usedIdx.add(idx);
+            return true;
+          });
+
+        if (
+          allItemsMatchRefs &&
+          isKcalCloseToTemplate(entryKcal, directTpl.avg_kcal, qty)
+        ) {
           addCount(directTpl.id, qty, 1);
           continue;
         }
       }
     }
 
-    const foodItems = entry.entry_items.filter((i) => i.item_kind === "food");
-
-    // 2. Pending / processing entry (or entry without items yet): parse raw_text clauses immediately!
+    // 2. Pending / processing entry: match whole raw_text, or multi-clause ONLY when
+    // every clause is a known template/shortcut (e.g. "2 kafe a protein") so "Chleba se šunkou a sýrem"
+    // never splits on "a" to falsely match "Chleba se šunkou"!
     if (
       entry.status === "pending" ||
       entry.status === "processing" ||
@@ -304,45 +389,70 @@ export function computeMealTemplateDayCounts(
     ) {
       if (entry.entry_type === "activity") continue;
 
-      const asciiRaw = stripAscii(entry.raw_text).replace(
-        /\b(protein(?:\s+shake)?|shake)\s*(?:\+|s|se|a|plus)\s*(?:10\s*g\s*)?(inulin\w*)\b/g,
-        "$1_WITH_$2"
-      );
+      const wholeAscii = stripAscii(entry.raw_text);
+      if (!/\b(?:vietnam\w*|salk\w*)\b/.test(wholeAscii)) {
+        const wholeQty = extractPortionCountPrefix(wholeAscii);
+        const wholeStripped = stripClauseMultiplierPrefix(wholeAscii);
+        const wholeMatch = phraseEntries.find(
+          ({ phraseAscii }) => wholeStripped === phraseAscii
+        );
+        if (wholeMatch) {
+          addCount(wholeMatch.tpl.id, wholeQty, 0);
+          continue;
+        }
+      }
 
-      const clauses = asciiRaw
-        .split(/(?:,|;|\.|!|\+|\n|\s+(?:a|i|plus)\s+)/)
-        .map((c) => c.replace(/_WITH_/g, " + ").replace(/\s+/g, " ").trim())
-        .filter(Boolean);
+      const clauses = splitRawTextClausesAscii(entry.raw_text);
+      if (clauses.length >= 2) {
+        const matchedClauses: Array<{ tplId: number; qty: number }> = [];
+        let allClausesMatched = true;
 
-      for (const clause of clauses) {
-        // Ignore parenthetical explanation fragments such as "(80ml salko plus kafe)"
-        if (/\b(?:vietnam\w*|salk\w*)\b/.test(clause)) continue;
-
-        const qty = extractPortionCountPrefix(clause);
-        const strippedClause = clause
-          .replace(/^\d+(?:[.,]\d+)?\s*(?:x|×)?\s+/, "")
-          .replace(/^(?:jeden|jedna|jedno|jednu|dva|dve|dvojit\w*|tri|ctyri)\s+/, "")
-          .trim();
-
-        for (const { phraseAscii, tpl } of phraseEntries) {
-          if (
-            strippedClause === phraseAscii ||
-            strippedClause.startsWith(`${phraseAscii} `) ||
-            (phraseAscii.includes(" ") && strippedClause.includes(phraseAscii))
-          ) {
-            addCount(tpl.id, qty, 0);
+        for (const clause of clauses) {
+          if (/\b(?:vietnam\w*|salk\w*)\b/.test(clause)) {
+            allClausesMatched = false;
             break;
+          }
+          const qty = extractPortionCountPrefix(clause);
+          const strippedClause = stripClauseMultiplierPrefix(clause);
+          const hit = phraseEntries.find(
+            ({ phraseAscii }) => strippedClause === phraseAscii
+          );
+          if (!hit) {
+            allClausesMatched = false;
+            break;
+          }
+          matchedClauses.push({ tplId: hit.tpl.id, qty });
+        }
+
+        if (allClausesMatched) {
+          for (const mc of matchedClauses) {
+            addCount(mc.tplId, mc.qty, 0);
           }
         }
       }
       continue;
     }
 
-    // 3. Completed entry (`status === "done"`) with `foodItems` (e.g. composite day log or "toast a kafe")
-    const claimedIndices = new Set<number>();
+    // 3. Completed entry (`status === "done"`) with `foodItems`
+    // Only treat a multi-item template as explicitly invoked inside a larger meal log
+    // if it has explicit `shortcut_aliases` appearing as a standalone clause.
+    const rawClausesStripped = splitRawTextClausesAscii(entry.raw_text).map(
+      stripClauseMultiplierPrefix
+    );
 
-    // Pass 3A: Multi-ingredient subset match FIRST (catches expanded presets like "toast a kafe"
-    // or "menší müsli" so component ingredients like "Granko" aren't prematurely claimed as standalone "Kakao")
+    // Pass 3A: Multi-ingredient templates
+    // To prevent false subset matches (like "Chleba + Šunka" inside "Chleba + Šunka + Tvrdý sýr"),
+    // we collect candidate multi-item matches first and ONLY commit them if:
+    // - ALL foodItems in the entry are cleanly partitioned with 0 leftover items, OR
+    // - the matched template was explicitly named as its own clause in `entry.raw_text`.
+    const tentativeClaimed = new Set<number>();
+    const tentativeMatches: Array<{
+      tpl: MealTemplateRow;
+      mult: number;
+      indices: number[];
+      explicitInRawText: boolean;
+    }> = [];
+
     for (const tpl of multiItemTemplates) {
       const refs = templateRefsById.get(tpl.id) ?? [];
       if (refs.length < 2) continue;
@@ -355,7 +465,7 @@ export function computeMealTemplateDayCounts(
         for (const ref of refs) {
           const foundIdx = foodItems.findIndex(
             (fi, idx) =>
-              !claimedIndices.has(idx) &&
+              !tentativeClaimed.has(idx) &&
               !candidateIndices.includes(idx) &&
               ingredientMatchesItem(ref.canonicalAscii, fi)
           );
@@ -368,8 +478,6 @@ export function computeMealTemplateDayCounts(
 
         if (!allMatched) break;
 
-        // Disambiguate templates that share identical ingredients in different portions
-        // (e.g. "Müsli" 251 kcal vs "Menší porce müsli" 160 kcal):
         const matchedKcal = candidateIndices.reduce(
           (s, idx) => s + foodItems[idx].kcal,
           0
@@ -394,30 +502,71 @@ export function computeMealTemplateDayCounts(
           }
         }
 
-        for (const idx of candidateIndices) {
-          claimedIndices.add(idx);
-        }
         const ratio =
           targetTpl.avg_kcal > 40 ? matchedKcal / targetTpl.avg_kcal : 1;
         const mult = ratio >= 1.65 && ratio <= 10 ? Math.round(ratio) : 1;
-        addCount(targetTpl.id, mult, 0);
+
+        if (!isKcalCloseToTemplate(matchedKcal, targetTpl.avg_kcal, mult)) {
+          break;
+        }
+
+        for (const idx of candidateIndices) {
+          tentativeClaimed.add(idx);
+        }
+
+        const explicitAliases = Array.isArray(targetTpl.shortcut_aliases)
+          ? targetTpl.shortcut_aliases.map(stripAscii)
+          : [];
+        const explicitInRawText =
+          explicitAliases.length > 0 &&
+          rawClausesStripped.some((c) => explicitAliases.includes(c));
+
+        tentativeMatches.push({
+          tpl: targetTpl,
+          mult,
+          indices: candidateIndices,
+          explicitInRawText,
+        });
       }
     }
 
-    // Pass 3B: Single-item headline/canonical match on remaining unclaimed items
-    // (catches AI items kept as 1 row like "Ice latte (150 ml mléka, 2 lžičky cukru)" -> Kafe)
+    const claimedIndices = new Set<number>();
+    const allEntryItemsPartitioned =
+      tentativeMatches.length > 0 && tentativeClaimed.size === foodItems.length;
+
+    for (const m of tentativeMatches) {
+      if (allEntryItemsPartitioned || m.explicitInRawText) {
+        for (const idx of m.indices) {
+          claimedIndices.add(idx);
+        }
+        addCount(m.tpl.id, m.mult, 0);
+      }
+    }
+
+    // Pass 3B: Single-item exact headline/canonical match on remaining unclaimed items
+    // Only matches templates that represent a single food/drink item (or explicit shortcut alias like "ice latte")
+    // AND whose calories match closely.
     foodItems.forEach((item, idx) => {
       if (claimedIndices.has(idx)) return;
       const itemHeadlineAscii = stripAscii(stripParenthetical(item.item_name));
       const itemCanonAscii = stripAscii(stripParenthetical(item.canonical_name));
+      const qty = extractPortionCountPrefix(item.item_name);
 
       for (const { phraseAscii, tpl } of phraseEntries) {
-        if (tpl.avg_kcal > 0 && item.kcal > 0 && item.kcal < tpl.avg_kcal * 0.45) {
+        const refs = templateRefsById.get(tpl.id) ?? [];
+        const hasAliases =
+          Array.isArray(tpl.shortcut_aliases) && tpl.shortcut_aliases.length > 0;
+        // Multi-ingredient templates without explicit aliases (like "Chleba se šunkou") must NEVER match a single item!
+        if (refs.length >= 2 && !hasAliases) {
           continue;
         }
-        if (itemMatchesPhrase(itemHeadlineAscii, itemCanonAscii, phraseAscii)) {
+
+        if (!isKcalCloseToTemplate(item.kcal, tpl.avg_kcal, qty)) {
+          continue;
+        }
+
+        if (itemMatchesPhraseExact(itemHeadlineAscii, itemCanonAscii, phraseAscii)) {
           claimedIndices.add(idx);
-          const qty = extractPortionCountPrefix(item.item_name);
           addCount(tpl.id, qty, 0);
           break;
         }
@@ -462,6 +611,57 @@ function extractDurationMinutesFromText(
   return fallbackMinutes;
 }
 
+function detectIntensityFromText(text: string): ActivityIntensity | null {
+  const ascii = stripAscii(text);
+  if (ascii.includes("lehka intenzita")) return "light";
+  if (ascii.includes("ostra intenzita")) return "high";
+  if (ascii.includes("stredni intenzita")) return "medium";
+  return null;
+}
+
+/**
+ * Inspects standalone activity entries on the current day for a specific `ActivityTemplateRow`
+ * so QuickCheckBar can pre-fill today's logged duration/intensity and offer in-place update
+ * instead of accidentally stacking duplicate entries (e.g. 60m + 60m = 120m).
+ */
+export function findDaySportExistingState(
+  sport: ActivityTemplateRow,
+  entries: LogEntryWithItems[]
+): DaySportExistingState {
+  let entryCount = 0;
+  let totalMinutes = 0;
+  let latestIntensity: ActivityIntensity | null = null;
+
+  for (const entry of entries) {
+    if (entry.status === "error" || entry.entry_type !== "activity") continue;
+    if (entry.activity_template_id !== sport.id) continue;
+
+    entryCount++;
+    const actItems = entry.entry_items.filter((i) => i.item_kind === "activity");
+    const mins =
+      actItems.length > 0
+        ? actItems.reduce(
+            (s, i) => s + (i.duration_minutes ?? sport.default_minutes),
+            0
+          )
+        : extractDurationMinutesFromText(entry.raw_text, sport.default_minutes);
+    totalMinutes += mins;
+
+    if (latestIntensity === null) {
+      latestIntensity = detectIntensityFromText(
+        entry.summary_title || entry.raw_text
+      );
+    }
+  }
+
+  return {
+    hasStandaloneEntry: entryCount > 0,
+    entryCount,
+    totalMinutes,
+    latestIntensity,
+  };
+}
+
 /**
  * Computes accurate per-day logged minutes for every quick activity template across
  * quick-logged sports, mixed text entries, multi-sport entries, and pending entries.
@@ -501,10 +701,9 @@ export function computeActivityTemplateDayMinutes(
             `${item.canonical_name} ${item.item_name}`
           ) ?? null;
         const matchedSport =
-          (sig ? sportBySig.get(sig) : undefined) ??
           (entry.activity_template_id != null
             ? sportById.get(entry.activity_template_id)
-            : undefined);
+            : undefined) ?? (sig ? sportBySig.get(sig) : undefined);
         if (matchedSport) {
           matchedAnyItem = true;
           addMins(

@@ -815,6 +815,7 @@ export function TrackerApp({
     activity_template_id: number;
     duration_minutes: number;
     intensity: ActivityIntensity;
+    mode?: "replace_day" | "add";
   }): Promise<boolean> {
     setActionError(null);
     setLoggingActivityId(payload.activity_template_id);
@@ -823,6 +824,7 @@ export function TrackerApp({
       const res = await safeFetchJson<{
         ok?: boolean;
         entry?: LogEntryWithItems;
+        removedEntryIds?: number[];
         summary?: DailySummaryRow;
         updatedTemplate?: ActivityTemplateRow | null;
         error?: string;
@@ -834,6 +836,7 @@ export function TrackerApp({
           log_date: selectedDate,
           duration_minutes: payload.duration_minutes,
           intensity: payload.intensity,
+          mode: payload.mode ?? "replace_day",
         }),
       });
 
@@ -844,9 +847,12 @@ export function TrackerApp({
 
       if (res.data.entry) {
         const created = res.data.entry;
+        const removedSet = new Set(res.data.removedEntryIds ?? []);
         setEntries((prev) => [
           created,
-          ...prev.filter((item) => item.id !== created.id),
+          ...prev.filter(
+            (item) => item.id !== created.id && !removedSet.has(item.id)
+          ),
         ]);
       }
 

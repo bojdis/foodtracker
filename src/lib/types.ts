@@ -79,6 +79,7 @@ export const QuickActivityLogSchema = z.object({
   log_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   duration_minutes: z.coerce.number().int().min(5).max(600),
   intensity: z.enum(["light", "medium", "high"]),
+  mode: z.enum(["replace_day", "add"]).default("replace_day"),
 });
 
 export const CreateMealTemplateSchema = z.object({

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   computeActivityTemplateDayMinutes,
   computeMealTemplateDayCounts,
+  findDaySportExistingState,
 } from "../template-counter";
 import type {
   ActivityTemplateRow,
@@ -293,6 +294,81 @@ describe("computeMealTemplateDayCounts", () => {
     expect(counts.get(3)).toEqual({ totalCount: 3, removableCount: 1 });
     expect(counts.get(2)).toEqual({ totalCount: 1, removableCount: 0 });
   });
+
+  it("never falsely checks off 'Chleba se šunkou' for 'Chleba šunka sýr' or 'Mullermilch Protein čokoládový' for 'Mullermilch zero'", () => {
+    const extraTemplates: MealTemplateRow[] = [
+      ...RADEK_TEMPLATES,
+      makeTemplate({
+        id: 17,
+        canonical_name: "Chleba se šunkou",
+        avg_kcal: 199,
+        shortcut_aliases: [],
+        template_items: [
+          { canonical_name: "Chléb", kcal: 145 },
+          { canonical_name: "Šunka dušená", kcal: 54 },
+        ],
+      }),
+      makeTemplate({
+        id: 24,
+        canonical_name: "Mullermilch Protein čokoládový",
+        avg_kcal: 268,
+        shortcut_aliases: [],
+        template_items: [
+          { canonical_name: "Mullermilch Protein čokoládový", kcal: 268 },
+        ],
+      }),
+    ];
+
+    const breadHamCheese = makeEntry({
+      id: 159,
+      raw_text: "Chleba šunka sýr",
+      summary_title: "Chleba se šunkou a sýrem",
+      meal_template_id: 17, // even if legacy row had bogus FK!
+      total_intake_kcal: 339,
+      entry_items: [
+        { id: 301, user_id: "u-1", log_entry_id: 159, item_kind: "food", item_name: "1x Krajíc chleba", canonical_name: "Chleba", portion_grams: 60, duration_minutes: null, met_value: null, kcal: 145, burned_kcal: 0, protein_g: 5, carbs_g: 28, fat_g: 1, fiber_g: 3, confidence: 0.9, created_at: NOW },
+        { id: 302, user_id: "u-1", log_entry_id: 159, item_kind: "food", item_name: "Šunka (1 porce)", canonical_name: "Šunka", portion_grams: 50, duration_minutes: null, met_value: null, kcal: 54, burned_kcal: 0, protein_g: 8.8, carbs_g: 0.5, fat_g: 1.5, fiber_g: 0, confidence: 0.9, created_at: NOW },
+        { id: 303, user_id: "u-1", log_entry_id: 159, item_kind: "food", item_name: "Tvrdý sýr (1 porce)", canonical_name: "Tvrdý sýr", portion_grams: 40, duration_minutes: null, met_value: null, kcal: 140, burned_kcal: 0, protein_g: 10, carbs_g: 0.5, fat_g: 11, fiber_g: 0, confidence: 0.9, created_at: NOW },
+      ],
+    });
+
+    const mullerZero = makeEntry({
+      id: 160,
+      raw_text: "Mullermilch Protein zero",
+      summary_title: "Mullermilch zero čokoládový",
+      total_intake_kcal: 216,
+      entry_items: [
+        { id: 304, user_id: "u-1", log_entry_id: 160, item_kind: "food", item_name: "Mullermilch zero čokoládový 400 ml", canonical_name: "Mullermilch zero čokoládový", portion_grams: 400, duration_minutes: null, met_value: null, kcal: 216, burned_kcal: 0, protein_g: 18, carbs_g: 20, fat_g: 6, fiber_g: 2, confidence: 0.95, created_at: NOW },
+      ],
+    });
+
+    const mullerClassic = makeEntry({
+      id: 161,
+      raw_text: "Mullermilch čokoládový 400 ml",
+      summary_title: "Mullermilch čokoládový",
+      total_intake_kcal: 304,
+      entry_items: [
+        { id: 305, user_id: "u-1", log_entry_id: 161, item_kind: "food", item_name: "Mullermilch čokoládový 400 ml", canonical_name: "Mullermilch čokoládový", portion_grams: 400, duration_minutes: null, met_value: null, kcal: 304, burned_kcal: 0, protein_g: 12, carbs_g: 46, fat_g: 6, fiber_g: 0, confidence: 0.95, created_at: NOW },
+      ],
+    });
+
+    const pendingBreadCheese = makeEntry({
+      id: 162,
+      status: "pending",
+      raw_text: "Chleba se šunkou a sýrem",
+      entry_items: [],
+    });
+
+    const counts = computeMealTemplateDayCounts(extraTemplates, [
+      breadHamCheese,
+      mullerZero,
+      mullerClassic,
+      pendingBreadCheese,
+    ]);
+
+    expect(counts.get(17)?.totalCount).toBe(0);
+    expect(counts.get(24)?.totalCount).toBe(0);
+  });
 });
 
 describe("computeActivityTemplateDayMinutes", () => {
@@ -378,5 +454,45 @@ describe("computeActivityTemplateDayMinutes", () => {
     ]);
     expect(mins.get(2)).toBe(90);
     expect(mins.get(1)).toBe(120);
+  });
+
+  it("detects existing standalone sport state on selected day for in-place editing", () => {
+    const loggedClimb = makeEntry({
+      id: 42,
+      status: "done",
+      entry_type: "activity",
+      activity_template_id: 2,
+      raw_text: "Lezení (60 min · lehká intenzita)",
+      summary_title: "Lezení (60 min · lehká intenzita)",
+      entry_items: [
+        {
+          id: 250,
+          user_id: "u-1",
+          log_entry_id: 42,
+          item_kind: "activity",
+          item_name: "Lezení (60 min · lehká intenzita)",
+          canonical_name: "Lezení",
+          portion_grams: null,
+          duration_minutes: 60,
+          met_value: 4.2,
+          kcal: 0,
+          burned_kcal: 242,
+          protein_g: 0,
+          carbs_g: 0,
+          fat_g: 0,
+          fiber_g: 0,
+          confidence: 1,
+          created_at: NOW,
+        },
+      ],
+    });
+
+    const state = findDaySportExistingState(SPORTS[1], [loggedClimb]);
+    expect(state).toEqual({
+      hasStandaloneEntry: true,
+      entryCount: 1,
+      totalMinutes: 60,
+      latestIntensity: "light",
+    });
   });
 });

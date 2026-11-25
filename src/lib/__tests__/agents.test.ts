@@ -397,6 +397,22 @@ describe("habit-detector signature normalization & promotion", () => {
     });
     expect(storedTemplates[0].is_quick_check).toBe(true);
     expect(linkedEntries.get(103)).toBe(1);
+
+    // Once pinned (`is_quick_check === true`), "Ovesná kaše s banánem a tvarohem" must NOT match template 1!
+    const porridgeWithTvaroh = parseEntryFallback({
+      rawText: "ovesná kaše s banánem a tvaroh",
+      userWeightKg: 80,
+      fallbackTimeSlot: "morning",
+    });
+    const r4 = await detectAndPromoteRecurringMeal({
+      supabase: mockSupabase,
+      userId: "user-1",
+      entryId: 104,
+      parsed: porridgeWithTvaroh,
+      foodItems: porridgeWithTvaroh.items,
+    });
+    expect(r4.templateId).toBe(2); // Separate template created, NOT merged into id=1!
+    expect(storedTemplates[0].template_items).toHaveLength(2); // Original favorite items untouched!
   });
 
   it("skips meal template creation for pure sport entries", async () => {
@@ -585,6 +601,17 @@ describe("habit-detector signature normalization & promotion", () => {
     expect(storedActivities[0].is_quick_check).toBe(true);
     expect(storedActivities[0].default_minutes).toBe(75);
     expect(linkedActivityEntries.get(303)).toBe(10);
+
+    // 4th log after pinned (`is_quick_check === true`) with 120 min MUST NOT overwrite default_minutes!
+    const badminton120 = [{ ...badminton60[0], duration_minutes: 120 }];
+    await detectAndPromoteRecurringActivity({
+      supabase: mockSupabase,
+      userId: "user-1",
+      entryId: 304,
+      activityItems: badminton120,
+    });
+    expect(storedActivities[0].default_minutes).toBe(75);
+    expect(storedActivities[0].max_minutes).toBe(180);
   });
 });
 

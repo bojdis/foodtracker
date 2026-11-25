@@ -40,7 +40,8 @@ export async function POST(request: Request) {
 
   const parsed = QuickActivityLogSchema.safeParse(rawBody);
   if (!parsed.success) {
-    const firstIssue = parsed.error.issues[0]?.message ?? "Neplatná data aktivity.";
+    const firstIssue =
+      parsed.error.issues[0]?.message ?? "Neplatná data aktivity.";
     return NextResponse.json({ error: firstIssue }, { status: 400 });
   }
 
@@ -69,6 +70,29 @@ export async function POST(request: Request) {
       { error: "Šablona aktivity nebyla nalezena." },
       { status: 404 }
     );
+  }
+
+  // If mode === "replace_day", replace any existing standalone quick/activity entries
+  // for this sport on `input.log_date` so adjusting duration/intensity updates in-place
+  // instead of stacking duplicate entries (e.g. 60m + 60m = 120m)!
+  let removedEntryIds: number[] = [];
+  if (input.mode === "replace_day") {
+    const { data: existingDayEntries } = await supabase
+      .from("log_entries")
+      .select("id")
+      .eq("user_id", userId)
+      .eq("log_date", input.log_date)
+      .eq("entry_type", "activity")
+      .eq("activity_template_id", template.id);
+
+    if (existingDayEntries && existingDayEntries.length > 0) {
+      removedEntryIds = existingDayEntries.map((r) => r.id);
+      await supabase
+        .from("log_entries")
+        .delete()
+        .in("id", removedEntryIds)
+        .eq("user_id", userId);
+    }
   }
 
   const weightKg = Number(profileRes.data?.weight_kg) || 85;
@@ -143,13 +167,17 @@ export async function POST(request: Request) {
     .select("*")
     .single();
 
-  // Remember user's chosen duration & intensity for next time!
+  // Keep `default_minutes` and `default_intensity` locked to the user's configured template settings!
+  // Only increment occurrence_count when adding a new session (not when editing an existing one on the same day).
+  const nextOccurrenceCount =
+    removedEntryIds.length > 0
+      ? template.occurrence_count
+      : template.occurrence_count + 1;
+
   const { data: updatedTemplate } = await supabase
     .from("activity_templates")
     .update({
-      occurrence_count: template.occurrence_count + 1,
-      default_minutes: input.duration_minutes,
-      default_intensity: input.intensity,
+      occurrence_count: nextOccurrenceCount,
       max_minutes: Math.max(template.max_minutes, input.duration_minutes + 30),
       last_done_at: nowIso,
       updated_at: nowIso,
@@ -178,6 +206,7 @@ export async function POST(request: Request) {
   return NextResponse.json({
     ok: true,
     entry: entryWithItems,
+    removedEntryIds,
     summary,
     updatedTemplate: updatedTemplate ?? null,
   });
