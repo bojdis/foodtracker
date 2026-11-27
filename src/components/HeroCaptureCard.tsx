@@ -147,7 +147,11 @@ export function HeroCaptureCard({
         : "";
 
   const defaultWaistStr =
-    dayMeasurement?.waist_cm != null ? String(dayMeasurement.waist_cm) : "";
+    dayMeasurement?.waist_cm != null
+      ? String(dayMeasurement.waist_cm)
+      : lastKnownWaistCm != null
+        ? String(lastKnownWaistCm)
+        : "";
 
   const defaultBpSysStr =
     dayMeasurement?.blood_pressure_sys != null
@@ -191,7 +195,11 @@ export function HeroCaptureCard({
           : ""
     );
     setWaistInput(
-      dayMeasurement?.waist_cm != null ? String(dayMeasurement.waist_cm) : ""
+      dayMeasurement?.waist_cm != null
+        ? String(dayMeasurement.waist_cm)
+        : lastKnownWaistCm != null
+          ? String(lastKnownWaistCm)
+          : ""
     );
     const nextSys =
       dayMeasurement?.blood_pressure_sys ?? effectiveLastBpSys ?? null;
@@ -225,6 +233,7 @@ export function HeroCaptureCard({
     dayMeasurement?.blood_pressure_dia,
     dayMeasurement?.pulse_bpm,
     lastKnownWeightKg,
+    lastKnownWaistCm,
     effectiveLastBpSys,
     effectiveLastBpDia,
     effectiveLastPulseBpm,
@@ -561,9 +570,47 @@ export function HeroCaptureCard({
               }`}
             >
               <Scale className="h-3.5 w-3.5 text-emerald-500" />
-              <span>Míry a tlak</span>
-              {hasTodayMeasurement && (
-                <Check className="h-3.5 w-3.5 stroke-[2.5] text-emerald-600 dark:text-emerald-400" />
+              {hasTodayMeasurement ? (
+                <span className="inline-flex items-center gap-1.5 tabular-nums">
+                  {dayMeasurement?.weight_kg != null && (
+                    <span>{formatNumCs(dayMeasurement.weight_kg)} kg</span>
+                  )}
+                  {dayMeasurement?.weight_kg != null &&
+                    dayMeasurement?.waist_cm != null && (
+                      <span className="opacity-50">·</span>
+                    )}
+                  {dayMeasurement?.waist_cm != null && (
+                    <span>{formatNumCs(dayMeasurement.waist_cm)} cm</span>
+                  )}
+                  {(dayMeasurement?.weight_kg != null ||
+                    dayMeasurement?.waist_cm != null) &&
+                    dayMeasurement?.blood_pressure_sys != null && (
+                      <span className="opacity-50">·</span>
+                    )}
+                  {dayMeasurement?.blood_pressure_sys != null &&
+                    dayMeasurement?.blood_pressure_dia != null && (
+                      <span className="inline-flex items-center gap-1 font-bold">
+                        <span
+                          className="h-1.5 w-1.5 rounded-full"
+                          style={{
+                            backgroundColor: getBloodPressureCategory(
+                              dayMeasurement.blood_pressure_sys,
+                              dayMeasurement.blood_pressure_dia
+                            ).dotColor,
+                          }}
+                        />
+                        {dayMeasurement.blood_pressure_sys}/
+                        {dayMeasurement.blood_pressure_dia}
+                        {dayMeasurement.pulse_bpm != null && (
+                          <span className="font-normal opacity-75">
+                            ({dayMeasurement.pulse_bpm} bpm)
+                          </span>
+                        )}
+                      </span>
+                    )}
+                </span>
+              ) : (
+                <span>Míry a tlak</span>
               )}
               {bodyDrawerOpen ? (
                 <ChevronUp className="h-3.5 w-3.5 opacity-70" />
