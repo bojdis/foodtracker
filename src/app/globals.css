@@ -34,6 +34,13 @@ body {
   padding-bottom: calc(0.75rem + env(safe-area-inset-bottom, 0px));
 }
 
+/* Prevent iOS standalone PWA long-press callout from opening raw data: URLs in a dead-end view */
+.no-touch-callout {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
 /* Subtle custom scrollbars */
 * {
   scrollbar-width: thin;
@@ -61,6 +68,12 @@ body {
 .no-scrollbar {
   -ms-overflow-style: none;
   scrollbar-width: none;
+}
+
+.no-callout {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 @keyframes shimmerSlide {

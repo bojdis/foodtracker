@@ -33,6 +33,7 @@ import {
 } from "@/lib/calculations";
 import { computeWeightTrendSeries } from "@/lib/progress-stats";
 import { safeFetchJson } from "@/lib/safe-fetch";
+import { usePwaBackHandler } from "@/lib/use-pwa-back-handler";
 import { HeroCaptureCard } from "./HeroCaptureCard";
 import { QuickCheckBar } from "./QuickCheckBar";
 import { DailyBalanceCard } from "./DailyBalanceCard";
@@ -131,6 +132,13 @@ export function TrackerApp({
   );
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<ActiveTab>("log");
+
+  // In standalone mobile PWA, pressing hardware Back on the Progres tab returns to Zápis
+  usePwaBackHandler(
+    activeTab === "progress" && !settingsOpen,
+    () => setActiveTab("log"),
+    "tab-progress"
+  );
 
   useEffect(() => {
     if (typeof window !== "undefined") {

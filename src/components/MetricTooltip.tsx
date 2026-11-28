@@ -10,7 +10,7 @@ import {
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
-import { HelpCircle } from "lucide-react";
+import { HelpCircle, X } from "lucide-react";
 
 interface MetricTooltipProps {
   /** Trigger content (label or value) */
@@ -191,8 +191,18 @@ export function MetricTooltip({
             }}
             className="z-[9999] rounded-2xl border border-slate-200 bg-white p-3 text-left text-xs leading-relaxed font-normal normal-case tracking-normal text-slate-700 shadow-2xl ring-1 ring-slate-900/5 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:ring-white/10"
           >
-            <div className="font-bold text-slate-900 dark:text-white">
-              {title}
+            <div className="flex items-start justify-between gap-2">
+              <div className="font-bold text-slate-900 dark:text-white">
+                {title}
+              </div>
+              <button
+                type="button"
+                onClick={() => setOpen(false)}
+                aria-label="Zavřít nápovědu"
+                className="-mr-1 -mt-1 rounded-lg p-1 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
             </div>
             <div className="mt-1 text-[11px] leading-relaxed text-slate-600 dark:text-slate-300">
               {description}

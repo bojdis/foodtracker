@@ -38,6 +38,7 @@ import {
   normalizeEnergyUnit,
 } from "@/lib/calculations";
 import { safeFetchJson } from "@/lib/safe-fetch";
+import { usePwaBackHandler } from "@/lib/use-pwa-back-handler";
 
 interface ProfileModalProps {
   isOpen: boolean;
@@ -86,6 +87,12 @@ export function ProfileModal({
 }: ProfileModalProps) {
   const router = useRouter();
   const isOnboarding = initialProfile === null;
+
+  usePwaBackHandler(
+    isOpen && !isOnboarding && Boolean(onClose),
+    () => onClose?.(),
+    "profile-modal"
+  );
 
   const [displayName, setDisplayName] = useState(
     initialProfile?.display_name ?? ""
@@ -359,8 +366,20 @@ export function ProfileModal({
   const customGoalDisplayValue = convertFromKcal(targetDeficitKcal, energyUnit);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/70 backdrop-blur-sm sm:items-center sm:p-4">
-      <div className="flex max-h-[94dvh] w-full max-w-lg flex-col overflow-hidden rounded-t-3xl border border-slate-200/80 bg-white shadow-2xl sm:rounded-3xl dark:border-slate-800 dark:bg-slate-900">
+    <div
+      role="dialog"
+      aria-modal="true"
+      onClick={() => {
+        if (!isOnboarding && onClose) {
+          onClose();
+        }
+      }}
+      className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/70 pt-safe backdrop-blur-sm sm:items-center sm:p-4"
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="flex max-h-[92dvh] w-full max-w-lg flex-col overflow-hidden rounded-t-3xl border border-slate-200/80 bg-white shadow-2xl sm:rounded-3xl dark:border-slate-800 dark:bg-slate-900"
+      >
         {/* Header */}
         <div className="flex items-center justify-between border-b border-slate-200/80 px-5 py-4 dark:border-slate-800">
           <div className="flex items-center gap-2.5">
@@ -942,14 +961,25 @@ export function ProfileModal({
             </div>
           )}
 
-          <button
-            type="submit"
-            disabled={saving}
-            className="flex w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-emerald-500 to-teal-600 px-4 py-3.5 text-sm font-semibold text-white shadow-lg shadow-emerald-500/25 transition hover:from-emerald-600 hover:to-teal-700 active:scale-[0.99] disabled:opacity-60"
-          >
-            {saving && <Loader2 className="h-4 w-4 animate-spin" />}
-            {isOnboarding ? "Uložit profil a spustit deník" : "Uložit změny"}
-          </button>
+          <div className="flex items-center gap-2">
+            {!isOnboarding && onClose && (
+              <button
+                type="button"
+                onClick={onClose}
+                className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 active:scale-[0.99] dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
+              >
+                Zpět
+              </button>
+            )}
+            <button
+              type="submit"
+              disabled={saving}
+              className="flex flex-1 items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-emerald-500 to-teal-600 px-4 py-3.5 text-sm font-semibold text-white shadow-lg shadow-emerald-500/25 transition hover:from-emerald-600 hover:to-teal-700 active:scale-[0.99] disabled:opacity-60"
+            >
+              {saving && <Loader2 className="h-4 w-4 animate-spin" />}
+              {isOnboarding ? "Uložit profil a spustit deník" : "Uložit změny"}
+            </button>
+          </div>
 
           <div className="flex items-center justify-between border-t border-slate-200/70 pt-3 text-xs text-slate-500 dark:border-slate-800 dark:text-slate-400">
             <span className="truncate">{userEmail ?? "Přihlášený uživatel"}</span>

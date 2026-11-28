@@ -7,24 +7,29 @@ import {
   type FormEvent,
   type KeyboardEvent,
 } from "react";
+import { createPortal } from "react-dom";
 import {
   Activity,
+  ArrowLeft,
   Camera,
   Check,
   ChevronDown,
   ChevronUp,
   Heart,
   Loader2,
+  Maximize2,
   Plus,
   Ruler,
   Scale,
   Sparkles,
+  Trash2,
   X,
 } from "lucide-react";
 import type { BodyMeasurementRow } from "@/lib/types";
 import { getBloodPressureCategory } from "@/lib/types";
 import { WaistMeasurementGuide } from "./WaistMeasurementGuide";
 import { compressImageFile, type CompressedImageResult } from "@/lib/image-utils";
+import { usePwaBackHandler } from "@/lib/use-pwa-back-handler";
 
 interface HeroCaptureCardProps {
   userId: string;
@@ -122,6 +127,7 @@ export function HeroCaptureCard({
   const [bodyDrawerOpen, setBodyDrawerOpen] = useState(false);
   const [selectedImage, setSelectedImage] =
     useState<CompressedImageResult | null>(null);
+  const [imagePreviewOpen, setImagePreviewOpen] = useState(false);
   const [imageCompressing, setImageCompressing] = useState(false);
   const [imageError, setImageError] = useState<string | null>(null);
   const [storedBp, setStoredBp] = useState<StoredBpValues>({
@@ -130,6 +136,12 @@ export function HeroCaptureCard({
     pulse: null,
   });
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  usePwaBackHandler(
+    imagePreviewOpen,
+    () => setImagePreviewOpen(false),
+    "hero-photo-lightbox"
+  );
 
   useEffect(() => {
     setStoredBp(readStoredBp(userId));
@@ -274,6 +286,7 @@ export function HeroCaptureCard({
 
   function clearSelectedImage() {
     setSelectedImage(null);
+    setImagePreviewOpen(false);
     setImageError(null);
   }
 
@@ -468,42 +481,130 @@ export function HeroCaptureCard({
 
       {/* Main Capture Form */}
       <form onSubmit={handleFormSubmit}>
-        {/* Hidden File / Camera Input */}
+        {/* Hidden File / Camera Input (sr-only instead of display:none for iOS standalone PWA reliability) */}
         <input
           ref={fileInputRef}
           type="file"
           accept="image/*"
-          className="hidden"
+          className="sr-only"
+          tabIndex={-1}
           onChange={handleFileSelect}
         />
 
         {/* Selected Image Thumbnail Preview Card */}
         {selectedImage && (
           <div className="mb-2.5 flex items-center gap-3 rounded-2xl border border-emerald-500/30 bg-emerald-50/80 p-2.5 dark:border-emerald-500/25 dark:bg-emerald-950/30">
-            <img
-              src={selectedImage.dataUrl}
-              alt="Náhled štítku"
-              className="h-14 w-14 rounded-xl border border-emerald-500/40 object-cover shadow-sm"
-            />
+            <button
+              type="button"
+              onClick={() => setImagePreviewOpen(true)}
+              aria-label="Zobrazit náhled fotky na celou obrazovku"
+              className="group relative h-14 w-14 shrink-0 overflow-hidden rounded-xl border border-emerald-500/40 shadow-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+            >
+              <img
+                src={selectedImage.dataUrl}
+                alt="Náhled fotky"
+                draggable={false}
+                onContextMenu={(e) => e.preventDefault()}
+                className="no-callout h-full w-full object-cover transition group-hover:scale-105"
+              />
+              <span className="absolute right-1 bottom-1 flex h-5 w-5 items-center justify-center rounded-md bg-slate-950/70 text-white">
+                <Maximize2 className="h-3 w-3" />
+              </span>
+            </button>
             <div className="min-w-0 flex-1 text-xs">
               <p className="flex items-center gap-1.5 font-bold text-emerald-800 dark:text-emerald-200">
                 <Camera className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
                 <span>Fotka jídla / štítku / tlaku připojena</span>
               </p>
               <p className="mt-0.5 text-slate-500 dark:text-slate-400">
-                Model odhadne porci z fotky jídla nebo vyčte hodnoty ze štítku / tlakoměru
+                Klepnutím na fotku ji zvětšíš · model odhadne porci nebo vyčte hodnoty
               </p>
             </div>
             <button
               type="button"
               onClick={clearSelectedImage}
               aria-label="Odebrat fotku"
-              className="rounded-xl p-1.5 text-slate-400 transition hover:bg-rose-500/10 hover:text-rose-500 dark:hover:bg-rose-500/20"
+              className="rounded-xl p-2 text-slate-400 transition hover:bg-rose-500/10 hover:text-rose-500 dark:hover:bg-rose-500/20"
             >
               <X className="h-4 w-4" />
             </button>
           </div>
         )}
+
+        {/* Fullscreen In-App Photo Lightbox with explicit Back/Close buttons for standalone PWA */}
+        {imagePreviewOpen &&
+          selectedImage &&
+          typeof document !== "undefined" &&
+          createPortal(
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-label="Náhled přiložené fotky"
+              onClick={() => setImagePreviewOpen(false)}
+              className="fixed inset-0 z-[100] flex flex-col bg-slate-950/95 text-white backdrop-blur-md"
+            >
+              {/* Top Bar with Safe Area + Prominent Back & Close buttons */}
+              <div
+                onClick={(e) => e.stopPropagation()}
+                className="flex items-center justify-between gap-2 border-b border-white/10 px-4 py-3 pt-safe"
+              >
+                <button
+                  type="button"
+                  onClick={() => setImagePreviewOpen(false)}
+                  className="inline-flex min-h-10 items-center gap-1.5 rounded-2xl bg-white/10 px-3.5 py-2 text-sm font-bold text-white transition hover:bg-white/20 active:scale-95"
+                >
+                  <ArrowLeft className="h-4 w-4" />
+                  <span>Zpět</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setImagePreviewOpen(false)}
+                  aria-label="Zavřít náhled fotky"
+                  className="inline-flex h-10 w-10 items-center justify-center rounded-2xl bg-white/10 text-white transition hover:bg-white/20 active:scale-95"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+
+              {/* Centered Photo */}
+              <div className="flex flex-1 items-center justify-center overflow-hidden p-4">
+                <img
+                  src={selectedImage.dataUrl}
+                  alt="Náhled přiložené fotky"
+                  draggable={false}
+                  onContextMenu={(e) => e.preventDefault()}
+                  onClick={(e) => e.stopPropagation()}
+                  className="no-callout max-h-full max-w-full rounded-2xl object-contain shadow-2xl"
+                />
+              </div>
+
+              {/* Bottom Action Bar with Safe Area */}
+              <div
+                onClick={(e) => e.stopPropagation()}
+                className="flex items-center justify-between gap-3 border-t border-white/10 px-4 py-3 pb-dock-safe"
+              >
+                <button
+                  type="button"
+                  onClick={clearSelectedImage}
+                  className="inline-flex min-h-11 items-center gap-1.5 rounded-2xl border border-rose-500/40 bg-rose-500/15 px-4 py-2 text-sm font-bold text-rose-200 transition hover:bg-rose-500/25 active:scale-95"
+                >
+                  <Trash2 className="h-4 w-4" />
+                  <span>Odebrat fotku</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setImagePreviewOpen(false)}
+                  className="inline-flex min-h-11 items-center gap-1.5 rounded-2xl bg-emerald-500 px-5 py-2 text-sm font-bold text-white shadow-md shadow-emerald-500/25 transition hover:bg-emerald-600 active:scale-95"
+                >
+                  <Check className="h-4 w-4 stroke-[2.5]" />
+                  <span>Použít fotku</span>
+                </button>
+              </div>
+            </div>,
+            document.body
+          )}
 
         {imageError && (
           <div className="mb-2.5 rounded-2xl border border-rose-500/30 bg-rose-500/10 p-2.5 text-xs font-semibold text-rose-700 dark:text-rose-300">
